@@ -39,3 +39,11 @@ jobs:
       with:
         name: TossAuto-APK
         path: app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Send APK to Telegram
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_TOKEN }}
+        message: "🎉 빌드 완료! 최신 APK 파일을 보냅니다."
+        document: app/build/outputs/apk/debug/app-debug.apk
