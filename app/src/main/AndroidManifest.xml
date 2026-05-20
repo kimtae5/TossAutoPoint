@@ -3,11 +3,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
         android:label="토스캐시자동화"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Design.NoActionBar">
+        android:theme="@android:style/Theme.Translucent.NoTitleBar">
 
         <activity
             android:name=".MainActivity"
