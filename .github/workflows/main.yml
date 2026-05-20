@@ -16,19 +16,19 @@ jobs:
       with:
         java-version: '11'
         distribution: 'temurin'
+        cache: gradle
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
-    - name: Create Minimal Android Project
-      run: |
-        mkdir -p app/src/main/java/com/kimtae5/tossautopoint
-        mkdir -p app/src/main/res/xml
-        echo "plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }" > build.gradle
-        gradle wrapper --gradle-version 7.5
+    - name: Create local.properties
+      run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
     - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+      run: |
+        if [ -f gradlew ]; then
+          chmod +x gradlew
+        else
+          gradle wrapper --gradle-version 7.5
+          chmod +x gradlew
+        fi
 
     - name: Build with Gradle
       run: ./gradlew assembleDebug
