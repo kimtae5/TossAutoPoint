@@ -3,74 +3,40 @@ package com.kimtae5.tossautopoint
 import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.accessibilityservice.GestureDescription
-import android.util.Log
 
 class TossAutoService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            
-            val rootNode = rootInActiveWindow ?: return
-            val currentApp = event.packageName?.toString() ?: ""
-            
-            when {
-                currentApp.contains("viva.republica.toss") -> {
-                    val tossTargets = listOf("받기", "포인트", "동전", "미션")
-                    for (target in tossTargets) {
-                        findAndClick(rootNode, target)
-                    }
-                }
+        val rootNode = rootInActiveWindow ?: return
 
-                currentApp.contains("com.cashwalk.cashwalk") -> {
-                    val cashwalkTargets = listOf(
-                        "동네 산책", "동네산책",
-                        "산책하고 최대 50캐시 받기", "50캐시 받기",
-                        "적립 완료", "적립완료", "1캐시",
-                        "닫기", "취소", "close"
-                    )
-                    
-                    for (target in cashwalkTargets) {
-                        findAndClick(rootNode, target)
-                    }
+        // 💡 현재 폰 화면에 뜬 창의 종류(이름)를 가로챕니다.
+        val className = event.className?.toString() ?: ""
 
-                    findXButton(rootNode)
-                }
-            }
+        // 💡 오직 'Dialog(대화상자)'나 'Popup(팝업)'이라는 단어가 포함된 팝업창 화면에서만 클릭을 작동시킵니다.
+        if (className.contains("Dialog") || className.contains("Popup") || event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            // 캐시워크 및 토스의 적립 관련 타격 단어 설정
+            checkAndClick(rootNode, "받기")
+            checkAndClick(rootNode, "상자")
+            checkAndClick(rootNode, "동전")
         }
     }
 
-    private fun findAndClick(node: AccessibilityNodeInfo?, text: String) {
-        if (node == null) return
-        val nodeText = node.text?.toString() ?: ""
-        val nodeDesc = node.contentDescription?.toString() ?: ""
-
-        if (nodeText.contains(text) || nodeDesc.contains(text)) {
-            var runner: AccessibilityNodeInfo? = node
-            while (runner != null) {
-                if (runner.isClickable) {
-                    runner.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    return 
+    private fun checkAndClick(node: AccessibilityNodeInfo, targetText: String) {
+        if (node.text != null && node.text.toString().contains(targetText)) {
+            var parent: AccessibilityNodeInfo? = node
+            while (parent != null) {
+                if (parent.isClickable) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    return
                 }
-                runner = runner.parent
+                parent = parent.parent
             }
         }
         for (i in 0 until node.childCount) {
-            findAndClick(node.getChild(i), text)
-        }
-    }
-
-    private fun findXButton(node: AccessibilityNodeInfo?) {
-        if (node == null) return
-        if (node.isClickable && node.className?.toString()?.contains("ImageView") == true) {
-            val desc = node.contentDescription?.toString() ?: ""
-            if (desc.isEmpty() || desc.contains("닫기") || desc.contains("close")) {
-                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            val child = node.getChild(i)
+            if (child != null) {
+                checkAndClick(child, targetText)
             }
-        }
-        for (i in 0 until node.childCount) {
-            findXButton(node.getChild(i))
         }
     }
 
