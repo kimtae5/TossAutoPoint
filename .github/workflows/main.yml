@@ -1,0 +1,40 @@
+name: Android CI (APK Auto Build)
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Create Minimal Android Project
+      run: |
+        mkdir -p app/src/main/java/com/kimtae5/tossautopoint
+        mkdir -p app/src/main/res/xml
+        echo "plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }" > build.gradle
+        gradle wrapper --gradle-version 7.5
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build with Gradle
+      run: ./gradlew assembleDebug
+
+    - name: Upload APK to Github Actions
+      uses: actions/upload-artifact@v4
+      with:
+        name: TossAuto-APK
+        path: app/build/outputs/apk/debug/app-debug.apk
