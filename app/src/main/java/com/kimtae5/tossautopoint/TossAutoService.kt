@@ -9,15 +9,15 @@ class TossAutoService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val rootNode = rootInActiveWindow ?: return
 
-        // 💡 현재 폰 화면에 뜬 창의 종류(이름)를 가로챕니다.
-        val className = event.className?.toString() ?: ""
+        // 💡 현재 화면을 실행 중인 앱의 고유 패키지명을 가져옵니다.
+        val packageName = event.packageName?.toString() ?: ""
 
-        // 💡 오직 'Dialog(대화상자)'나 'Popup(팝업)'이라는 단어가 포함된 팝업창 화면에서만 클릭을 작동시킵니다.
-        if (className.contains("Dialog") || className.contains("Popup") || event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            // 캐시워크 및 토스의 적립 관련 타격 단어 설정
+        // 💡 오직 토스(toss) 앱이거나 캐시워크(cashwalk) 앱이 켜져 있을 때만 클릭 센서를 가동합니다.
+        if (packageName.contains("toss") || packageName.contains("cashwalk")) {
             checkAndClick(rootNode, "받기")
             checkAndClick(rootNode, "상자")
             checkAndClick(rootNode, "동전")
+            checkAndClick(rootNode, "확인")
         }
     }
 
