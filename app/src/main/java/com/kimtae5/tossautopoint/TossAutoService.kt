@@ -229,13 +229,13 @@ class TossAutoService : AccessibilityService() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .addAction(android.R.drawable.ic_delete, "🚨 강제 멈춤", stopPendingIntent)
 
-        // 각 앱 상태별 최적화된 재생/일시정지 버튼 페어링 레이아웃 조립
+        // 💡 [에러 해결] 각 앱 상태별 ic_media_start 오타를 정식 명칭인 ic_media_play로 전면 수정
         when (appMode) {
             "toss" -> {
                 if (!isTossSwiping) {
                     val startToss = Intent("ACTION_START_TOSS")
                     val pStart = PendingIntent.getBroadcast(this, 1, startToss, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                    builder.addAction(android.R.drawable.ic_media_start, "▶ 토스 시작", pStart)
+                    builder.addAction(android.R.drawable.ic_media_play, "▶ 토스 시작", pStart)
                 } else {
                     val stopToss = Intent("ACTION_STOP_TOSS")
                     val pStop = PendingIntent.getBroadcast(this, 2, stopToss, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -246,7 +246,7 @@ class TossAutoService : AccessibilityService() {
                 if (!isTiktokSwiping) {
                     val startTiktok = Intent("ACTION_START_TIKTOK")
                     val pStart = PendingIntent.getBroadcast(this, 3, startTiktok, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                    builder.addAction(android.R.drawable.ic_media_start, "▶ 틱톡라이트 시작", pStart)
+                    builder.addAction(android.R.drawable.ic_media_play, "▶ 틱톡라이트 시작", pStart)
                 } else {
                     val stopTiktok = Intent("ACTION_STOP_TIKTOK")
                     val pStop = PendingIntent.getBroadcast(this, 4, stopTiktok, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
