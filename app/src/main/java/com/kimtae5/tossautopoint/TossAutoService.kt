@@ -24,7 +24,6 @@ class TossAutoService : AccessibilityService() {
     private var isRobotRunning = true
     private var currentPackageName = ""
 
-    // 각 앱별 독립 제어를 위한 변수 및 루틴 정의
     private var isTossSwiping = false
     private var isTiktokSwiping = false
     private var tossRunnable: Runnable? = null
@@ -36,34 +35,34 @@ class TossAutoService : AccessibilityService() {
             if (!isRobotRunning && intent?.action != "ACTION_STOP_ROBOT") return
 
             when (intent?.action) {
-                "ACTION_STOP_ROBOT" -> { // 마스터 브레이크
+                "ACTION_STOP_ROBOT" -> { 
                     isRobotRunning = false
                     stopTossSwipe()
                     stopTiktokSwipe()
                     showToast("🛑 [AI 안전장치] 전체 기능을 강제 종료합니다.")
                     stopForeground(true)
                 }
-                "ACTION_START_TOSS" -> { // 토스 재생
+                "ACTION_START_TOSS" -> { 
                     isTossSwiping = true
                     startTossSwipeLoop()
                     updateNotification("토스 스와이프 중", "toss")
-                    showToast("▶ [토스] 아래->위 무한 스와이프를 시작합니다.")
+                    showToast("▶ [토스] 아래->위 무한 스와이프 시작")
                 }
-                "ACTION_STOP_TOSS" -> { // 토스 정지
+                "ACTION_STOP_TOSS" -> { 
                     stopTossSwipe()
                     updateNotification("토스 대기 중", "toss")
-                    showToast("■ [토스] 스와이프를 일시 정지합니다.")
+                    showToast("■ [토스] 스와이프 일시 정지")
                 }
-                "ACTION_START_TIKTOK" -> { // 틱톡 라이트 재생
+                "ACTION_START_TIKTOK" -> { 
                     isTiktokSwiping = true
                     startTiktokSwipeLoop()
                     updateNotification("틱톡라이트 스와이프 중", "tiktok")
-                    showToast("▶ [틱톡라이트] 30초 타이머를 가동합니다.")
+                    showToast("▶ [틱톡라이트] 30초 타이머 가동")
                 }
-                "ACTION_STOP_TIKTOK" -> { // 틱톡 라이트 정지
+                "ACTION_STOP_TIKTOK" -> { 
                     stopTiktokSwipe()
                     updateNotification("틱톡라이트 대기 중", "tiktok")
-                    showToast("■ [틱톡라이트] 타이머를 일시 정지합니다.")
+                    showToast("■ [틱톡라이트] 타이머 일시 정지")
                 }
             }
         }
@@ -94,34 +93,33 @@ class TossAutoService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (!isRobotRunning) return
 
-        val rootNode = rootInActiveWindow ?: return
+        // [수정 핵심 1] 화면 정보(rootNode) 유무와 관계없이, 앱 변경 패키지명을 0순위로 추출합니다.
         val packageName = event.packageName?.toString() ?: ""
-
         if (packageName.isNotEmpty() && packageName != currentPackageName) {
             currentPackageName = packageName
             onAppChanged(packageName)
         }
 
-        // ==========================================
-        // ⭕ [캐시워크 모드] 팝업 감지 후 0초 즉시 정밀 타격
-        // ==========================================
+        // 이후 로직은 화면 정보가 온전히 존재할 때만 실행합니다.
+        val rootNode = rootInActiveWindow ?: return
+
+        // [수정 핵심 2] 캐시워크 팝업 감지 방식 변경 (세포 수 측정 폐기 -> 텍스트 직관 검색)
         if (currentPackageName.contains("cashwalk")) {
-            val nodeCount = countNodes(rootNode)
-            // 화면 세포(노드) 수가 50개 이하로 떨어지는 팝업 등장 순간 포착
-            if (nodeCount in 1..50) {
-                showToast("⚡ [캐시워크] 팝업 감지 즉시 타격! X자(0.8, 0.37) 클릭")
-                // Delay 없이 즉시 지연 시간 0초 만에 인젝션 실행
+            // 화면 노드 전체를 뒤져서 캡처 사진에 있던 "적립 완료"라는 글자를 찾습니다.
+            val targetNodes = rootNode.findAccessibilityNodeInfosByText("적립 완료")
+            
+            // 해당 글자가 하나라도 발견되면 팝업이 뜬 것으로 확정합니다.
+            if (targetNodes.isNotEmpty()) {
+                showToast("⚡ [캐시워크] 텍스트 스캔 완료! 즉시 타격")
                 clickSpecificRatio(0.8f, 0.37f) 
             }
         }
     }
 
-    // 스마트폰 켜진 앱이 바뀔 때 상단바 버튼 구성을 변경함
     private fun onAppChanged(packageName: String) {
         if (packageName.contains("toss")) {
             updateNotification("토스 감지됨", "toss")
         } else if (packageName.contains("tiktok") || packageName.contains("musically.go")) { 
-            // 일반 틱톡 및 틱톡 라이트(musically.go) 모두 대응
             updateNotification("틱톡라이트 감지됨", "tiktok")
         } else if (packageName.contains("cashwalk")) {
             updateNotification("캐시워크 감지됨", "none")
@@ -134,15 +132,12 @@ class TossAutoService : AccessibilityService() {
         }
     }
 
-    // ==========================================
-    // ⭕ [토스 루틴] 제어 스위치에 따른 아래->위 무한 스와이프
-    // ==========================================
     private fun startTossSwipeLoop() {
         tossRunnable = object : Runnable {
             override fun run() {
                 if (isRobotRunning && isTossSwiping && currentPackageName.contains("toss")) {
-                    swipeBelowToUp() // 아래에서 위로 스와이프 실행
-                    handler.postDelayed(this, 1800) // 1.8초 간격으로 연속 스크롤 부드럽게 유지
+                    swipeBelowToUp()
+                    handler.postDelayed(this, 1800)
                 }
             }
         }
@@ -154,19 +149,16 @@ class TossAutoService : AccessibilityService() {
         tossRunnable?.let { handler.removeCallbacks(it) }
     }
 
-    // ==========================================
-    // ⭕ [틱톡 라이트 루틴] 제어 스위치에 따른 30초 스와이프
-    // ==========================================
     private fun startTiktokSwipeLoop() {
         tiktokRunnable = object : Runnable {
             override fun run() {
                 if (isRobotRunning && isTiktokSwiping && (currentPackageName.contains("tiktok") || currentPackageName.contains("musically.go"))) {
-                    swipeBelowToUp() // 아래에서 위로 스와이프 실행
-                    handler.postDelayed(this, 30000) // 정밀한 30초 타이머 주기 적용
+                    swipeBelowToUp()
+                    handler.postDelayed(this, 30000)
                 }
             }
         }
-        handler.postDelayed(tiktokRunnable!!, 500) // 첫 시작은 0.5초 뒤 가동
+        handler.postDelayed(tiktokRunnable!!, 500)
     }
 
     private fun stopTiktokSwipe() {
@@ -174,7 +166,6 @@ class TossAutoService : AccessibilityService() {
         tiktokRunnable?.let { handler.removeCallbacks(it) }
     }
 
-    // 📱 [X자 타격용] 전달받은 해상도 비례 좌표를 정밀 타격하는 제스처 엔진
     private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
         val displayMetrics = resources.displayMetrics
         val targetX = displayMetrics.widthPixels * ratioX
@@ -186,34 +177,22 @@ class TossAutoService : AccessibilityService() {
         dispatchGesture(gestureDescription, null, null)
     }
 
-    // 👆 [통합 스와이프] 손가락을 아래(80% 지점)에서 위(20% 지점)로 정밀하게 쓸어 올림
     private fun swipeBelowToUp() {
         val displayMetrics = resources.displayMetrics
         val startX = displayMetrics.widthPixels / 2f
         val endX = displayMetrics.widthPixels / 2f
-        
-        val startY = displayMetrics.heightPixels * 0.8f  // 화면 아래쪽
-        val endY = displayMetrics.heightPixels * 0.2f    // 화면 위쪽
+        val startY = displayMetrics.heightPixels * 0.8f
+        val endY = displayMetrics.heightPixels * 0.2f
 
         val path = Path().apply {
             moveTo(startX, startY)
             lineTo(endX, endY)
         }
-        val strokeDescription = GestureDescription.StrokeDescription(path, 0, 280) // 0.28초 동안 밀기
+        val strokeDescription = GestureDescription.StrokeDescription(path, 0, 280)
         val gestureDescription = GestureDescription.Builder().addStroke(strokeDescription).build()
         dispatchGesture(gestureDescription, null, null)
     }
 
-    private fun countNodes(node: AccessibilityNodeInfo?): Int {
-        if (node == null) return 0
-        var count = 1
-        for (i in 0 until node.childCount) {
-            count += countNodes(node.getChild(i))
-        }
-        return count
-    }
-
-    // 🚨 [상단바 멀티 컨트롤러] 현재 앱 상태에 맞춰 시작/정지 버튼을 실시간으로 조립하는 제어판
     private fun updateNotification(statusText: String, appMode: String) {
         val stopIntent = Intent("ACTION_STOP_ROBOT")
         val stopPendingIntent = PendingIntent.getBroadcast(this, 0, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -229,7 +208,6 @@ class TossAutoService : AccessibilityService() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .addAction(android.R.drawable.ic_delete, "🚨 강제 멈춤", stopPendingIntent)
 
-        // 💡 [에러 해결] 각 앱 상태별 ic_media_start 오타를 정식 명칭인 ic_media_play로 전면 수정
         when (appMode) {
             "toss" -> {
                 if (!isTossSwiping) {
