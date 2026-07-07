@@ -16,13 +16,15 @@ import android.widget.Toast
 
 class TossAutoService : AccessibilityService() {
 
-    private val handler = Handler(Looper.getMainLooper())
+    companion object {
+        const val PKG_TOSS = "viva.republica.toss"
+        const val PKG_TIKTOK_GLOBAL = "com.zhiliaoapp.musically"
+        const val PKG_TIKTOK_KR = "com.ss.android.ugc.trill"
+        const val PKG_CASHWALK = "cashwalk.android"
+    }
+
     private var windowManager: WindowManager? = null
     private var floatingView: LinearLayout? = null
-    private var isTossSwiping = false
-    private var isTiktokSwiping = false
-    private var tossRunnable: Runnable? = null
-    private var tiktokRunnable: Runnable? = null
     private var currentPackageName = ""
 
     override fun onServiceConnected() {
@@ -46,118 +48,72 @@ class TossAutoService : AccessibilityService() {
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xAA000000.toInt())
-            visibility = View.GONE // 처음엔 숨김 상태로 시작
+            visibility = View.GONE
         }
         windowManager?.addView(floatingView, params)
     }
 
     private fun updateFloatingButtons(packageName: String) {
         val layout = floatingView ?: return
+        val isTarget = packageName == PKG_TOSS || packageName == PKG_TIKTOK_GLOBAL || 
+                       packageName == PKG_TIKTOK_KR || packageName == PKG_CASHWALK
         
-        // [핵심 로직] 타겟 앱인지 확인
-        val isTargetApp = packageName.contains("toss") || 
-                          packageName.contains("tiktok") || 
-                          packageName.contains("musically.go") || 
-                          packageName.contains("cashwalk")
-
-        // 앱이 타겟 앱이면 보이고, 아니면 숨김
-        layout.visibility = if (isTargetApp) View.VISIBLE else View.GONE
-        
-        if (!isTargetApp) return // 타겟 앱이 아니면 버튼을 그리지 않음
+        layout.visibility = if (isTarget) View.VISIBLE else View.GONE
+        if (!isTarget) return
 
         layout.removeAllViews()
-
-        if (packageName.contains("toss")) {
-            addButton(layout, if (isTossSwiping) "■ 토스 정지" else "▶ 토스 시작") {
-                if (isTossSwiping) stopTossSwipe() else startTossSwipeLoop()
-                updateFloatingButtons(packageName)
-            }
-        } else if (packageName.contains("tiktok") || packageName.contains("musically.go")) {
-            addButton(layout, if (isTiktokSwiping) "■ 틱톡 정지" else "▶ 틱톡 시작") {
-                if (isTiktokSwiping) stopTiktokSwipe() else startTiktokSwipeLoop()
-                updateFloatingButtons(packageName)
-            }
-        } else if (packageName.contains("cashwalk")) {
-            addButton(layout, "캐시워크 활성화") { showToast("팝업 감지 대기 중입니다.") }
+        
+        // [강제 실행 버튼]
+        addButton(layout, "⚡ 강제 스와이프") {
+            performForceSwipe()
         }
     }
 
     private fun addButton(layout: LinearLayout, text: String, onClick: () -> Unit) {
         val btn = Button(this).apply {
             this.text = text
-            this.setOnClickListener { onClick() }
+            setOnClickListener { onClick() }
         }
         layout.addView(btn)
     }
 
+    // [핵심] 상태 관리 없이 즉시 실행하는 함수
+    private fun performForceSwipe() {
+        showToast("스와이프 시도 중...")
+        
+        val dm = resources.displayMetrics
+        val path = Path().apply {
+            moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.8f)
+            lineTo(dm.widthPixels / 2f, dm.heightPixels * 0.2f)
+        }
+
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
+            .build()
+
+        dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+                showToast("스와이프 성공!")
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                super.onCancelled(gestureDescription)
+                showToast("스와이프 실패 (권한 제한됨)")
+            }
+        }, null)
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: ""
-        if (packageName.isNotEmpty() && packageName != currentPackageName) {
+        if (packageName != currentPackageName) {
             currentPackageName = packageName
             updateFloatingButtons(packageName)
         }
-
-        if (packageName.contains("cashwalk")) {
-            val rootNode = rootInActiveWindow ?: return
-            if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty()) {
-                clickSpecificRatio(0.8f, 0.37f)
-            }
-        }
     }
 
-    // --- 스와이프 로직 유지 ---
-    private fun startTossSwipeLoop() {
-        isTossSwiping = true
-        tossRunnable = object : Runnable {
-            override fun run() {
-                if (isTossSwiping) {
-                    swipeBelowToUp()
-                    handler.postDelayed(this, 1800)
-                }
-            }
-        }
-        handler.post(tossRunnable!!)
+    private fun showToast(msg: String) = Handler(Looper.getMainLooper()).post { 
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() 
     }
-
-    private fun stopTossSwipe() {
-        isTossSwiping = false
-        tossRunnable?.let { handler.removeCallbacks(it) }
-    }
-
-    private fun startTiktokSwipeLoop() {
-        isTiktokSwiping = true
-        tiktokRunnable = object : Runnable {
-            override fun run() {
-                if (isTiktokSwiping) {
-                    swipeBelowToUp()
-                    handler.postDelayed(this, 30000)
-                }
-            }
-        }
-        handler.post(tiktokRunnable!!)
-    }
-
-    private fun stopTiktokSwipe() {
-        isTiktokSwiping = false
-        tiktokRunnable?.let { handler.removeCallbacks(it) }
-    }
-
-    private fun swipeBelowToUp() {
-        val displayMetrics = resources.displayMetrics
-        val path = Path().apply {
-            moveTo(displayMetrics.widthPixels / 2f, displayMetrics.heightPixels * 0.8f)
-            lineTo(displayMetrics.widthPixels / 2f, displayMetrics.heightPixels * 0.2f)
-        }
-        dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 280)).build(), null, null)
-    }
-
-    private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
-        val displayMetrics = resources.displayMetrics
-        val path = Path().apply { moveTo(displayMetrics.widthPixels * ratioX, displayMetrics.heightPixels * ratioY) }
-        dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 40)).build(), null, null)
-    }
-
-    private fun showToast(msg: String) = handler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
     override fun onDestroy() {
         super.onDestroy()
