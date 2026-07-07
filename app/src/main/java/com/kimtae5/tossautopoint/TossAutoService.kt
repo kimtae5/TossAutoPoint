@@ -16,8 +16,7 @@ import android.widget.Toast
 
 class TossAutoService : AccessibilityService() {
 
-    // 💡 버전 표시 상수 추가
-    private val APP_VERSION = "v1.5"
+    private val APP_VERSION = "v1.6"
 
     private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
@@ -47,39 +46,40 @@ class TossAutoService : AccessibilityService() {
 
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xAA000000.toInt()) // 반투명 배경
+            setBackgroundColor(0xAA000000.toInt()) 
             visibility = View.GONE
         }
         windowManager?.addView(floatingView, params)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val pkg = event.packageName?.toString() ?: return
+        // [버그 수정] 이벤트 패키지명이 null일 때 강제 종료하지 않고 안전하게 처리
+        val pkg = event.packageName?.toString()
         
-        // 💡 [수정] 틱톡 라이트, 한국 틱톡, 캐시워크 등 모든 패키지명 확실하게 포함
-        val isTarget = pkg.contains("toss") || 
-                       pkg.contains("tiktok") || 
-                       pkg.contains("musically") || 
-                       pkg.contains("trill") || 
-                       pkg.contains("cashwalk")
-        
-        // 앱 화면이 전환되었을 때 UI 업데이트
-        if (pkg != currentPackageName) {
+        if (pkg != null && pkg != currentPackageName) {
             currentPackageName = pkg
             
+            // [버그 수정] 틱톡의 진짜 패키지명(aweme) 추가
+            val isTarget = pkg.contains("toss") || 
+                           pkg.contains("tiktok") || 
+                           pkg.contains("musically") || 
+                           pkg.contains("trill") || 
+                           pkg.contains("aweme") || 
+                           pkg.contains("cashwalk")
+
             val layout = floatingView ?: return
+
+            // [버그 수정] 타겟 앱이면 켜고, 홈 화면이나 다른 앱이면 '무조건' 숨김
             if (isTarget) {
                 layout.visibility = View.VISIBLE
                 updateButtons(pkg)
             } else {
-                // 타겟 앱이 아니면(홈화면 등) 버튼 숨기고 동작 강제 정지
                 layout.visibility = View.GONE
-                stopSwipe() 
+                stopSwipe() // 버튼이 숨겨지면 동작도 무조건 정지
             }
         }
 
-        // 💡 [복구] 예전에 작동했던 캐시워크 클릭 로직
-        if (pkg.contains("cashwalk")) {
+        if (pkg != null && pkg.contains("cashwalk")) {
             val rootNode = rootInActiveWindow ?: return
             if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty()) {
                 clickSpecificRatio(0.8f, 0.37f)
@@ -87,7 +87,6 @@ class TossAutoService : AccessibilityService() {
         }
     }
 
-    // 💡 앱에 따라 동적으로 버튼 텍스트 변경 (버전 표시 포함)
     private fun updateButtons(pkg: String) {
         val layout = floatingView ?: return
         layout.removeAllViews()
@@ -99,7 +98,6 @@ class TossAutoService : AccessibilityService() {
         }
 
         val btn = Button(this).apply {
-            // 버튼에 버전 텍스트 표시
             text = if (isRunning) "■ $appName 정지 ($APP_VERSION)" else "▶ $appName 시작 ($APP_VERSION)"
             setOnClickListener {
                 if (isRunning) stopSwipe() else startSwipe()
@@ -115,12 +113,11 @@ class TossAutoService : AccessibilityService() {
             override fun run() {
                 if (isRunning) {
                     performSwipe()
-                    handler.postDelayed(this, 3000) // 3초 간격 스와이프
+                    handler.postDelayed(this, 3000) 
                 }
             }
         }
         handler.post(swipeRunnable!!)
-        showToast("자동화 시작!")
     }
 
     private fun stopSwipe() {
@@ -128,28 +125,29 @@ class TossAutoService : AccessibilityService() {
         swipeRunnable?.let { handler.removeCallbacks(it) }
     }
 
-    // 💡 [수정] 스와이프 튜닝: 사람의 손가락 움직임과 가장 유사한 좌표와 속도
     private fun performSwipe() {
         val dm = resources.displayMetrics
         val startX = dm.widthPixels / 2f
-        val startY = dm.heightPixels * 0.7f // 아래에서
+        val startY = dm.heightPixels * 0.7f 
         val endX = dm.widthPixels / 2f
-        val endY = dm.heightPixels * 0.3f // 위로
+        val endY = dm.heightPixels * 0.3f 
 
         val path = Path().apply {
             moveTo(startX, startY)
             lineTo(endX, endY)
         }
         
-        // 400ms: 시스템이 가짜 입력으로 인식하지 않고 물리적 드래그로 인식하기 가장 좋은 시간
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 400))
             .build()
             
-        dispatchGesture(gesture, null, null)
+        // [버그 확인용] XML에 canPerformGestures="true"가 없으면 success가 false로 나옴
+        val success = dispatchGesture(gesture, null, null)
+        if (!success) {
+            showToast("스와이프 실패! (XML 설정을 확인하세요)")
+        }
     }
 
-    // 예전의 클릭 로직
     private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
         val dm = resources.displayMetrics
         val path = Path().apply { moveTo(dm.widthPixels * ratioX, dm.heightPixels * ratioY) }
