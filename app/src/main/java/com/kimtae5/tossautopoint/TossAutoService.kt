@@ -48,25 +48,33 @@ class TossAutoService : AccessibilityService() {
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xAA000000.toInt())
-            visibility = View.GONE
+            visibility = View.GONE // 처음엔 숨김
         }
         windowManager?.addView(floatingView, params)
     }
 
-    private fun updateFloatingButtons(packageName: String) {
+    // [강화된 버튼 관리]
+    private fun updateFloatingButtons(packageName: String?) {
         val layout = floatingView ?: return
-        val isTarget = packageName == PKG_TOSS || packageName == PKG_TIKTOK_GLOBAL || 
-                       packageName == PKG_TIKTOK_KR || packageName == PKG_CASHWALK
         
-        layout.visibility = if (isTarget) View.VISIBLE else View.GONE
-        if (!isTarget) return
+        // 타겟 앱 판별
+        val isTarget = packageName != null && (
+            packageName == PKG_TOSS || 
+            packageName == PKG_TIKTOK_GLOBAL || 
+            packageName == PKG_TIKTOK_KR || 
+            packageName == PKG_CASHWALK
+        )
 
+        // [핵심 해결] 타겟이 아니면 무조건 GONE (버튼 강제 삭제)
+        if (!isTarget) {
+            layout.visibility = View.GONE
+            return
+        }
+
+        layout.visibility = View.VISIBLE
         layout.removeAllViews()
         
-        // [강제 실행 버튼]
-        addButton(layout, "⚡ 강제 스와이프") {
-            performForceSwipe()
-        }
+        addButton(layout, "⚡ 강제 스와이프") { performForceSwipe() }
     }
 
     private fun addButton(layout: LinearLayout, text: String, onClick: () -> Unit) {
@@ -77,10 +85,8 @@ class TossAutoService : AccessibilityService() {
         layout.addView(btn)
     }
 
-    // [핵심] 상태 관리 없이 즉시 실행하는 함수
     private fun performForceSwipe() {
-        showToast("스와이프 시도 중...")
-        
+        // 화면 해상도에 따른 좌표 계산
         val dm = resources.displayMetrics
         val path = Path().apply {
             moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.8f)
@@ -91,24 +97,26 @@ class TossAutoService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
             .build()
 
-        dispatchGesture(gesture, object : GestureResultCallback() {
+        // [디버깅 추가] 결과에 따른 메시지
+        val success = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
-                super.onCompleted(gestureDescription)
-                showToast("스와이프 성공!")
+                showToast("스와이프 완료")
             }
             override fun onCancelled(gestureDescription: GestureDescription?) {
-                super.onCancelled(gestureDescription)
-                showToast("스와이프 실패 (권한 제한됨)")
+                showToast("스와이프 실패: 권한 또는 앱 차단")
             }
         }, null)
+
+        if (!success) showToast("스와이프 요청 실패")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        val packageName = event.packageName?.toString() ?: ""
-        if (packageName != currentPackageName) {
-            currentPackageName = packageName
-            updateFloatingButtons(packageName)
-        }
+        // [강화] 이벤트 소스에서 패키지명 추출 (null 체크)
+        val packageName = event.packageName?.toString()
+        
+        // 패키지가 바뀌었거나, 타겟 앱이 아닐 때 즉시 갱신
+        updateFloatingButtons(packageName)
+        currentPackageName = packageName ?: ""
     }
 
     private fun showToast(msg: String) = Handler(Looper.getMainLooper()).post { 
