@@ -2,7 +2,7 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagIncludeNotImportantViews"
+    android:accessibilityFlags="flagDefault"
     android:canRetrieveWindowContent="true"
-    android:packageNames="com.cashwalk.cashwalk,viva.republica.toss" 
+    android:canPerformGestures="true" 
     android:notificationTimeout="100" />
