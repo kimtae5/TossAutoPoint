@@ -7,7 +7,6 @@ import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -19,25 +18,24 @@ class TossAutoService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
-    private var floatingView: View? = null
+    private var floatingView: LinearLayout? = null
     private var isTossSwiping = false
     private var isTiktokSwiping = false
     private var tossRunnable: Runnable? = null
     private var tiktokRunnable: Runnable? = null
+    private var currentPackageName = ""
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         createFloatingView()
-        showToast("🤖 [플로팅 로봇] 가동 시작!")
     }
 
-    // 💡 화면 최상단에 버튼 뷰 생성
     private fun createFloatingView() {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, // 최상위 레이어
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
@@ -47,31 +45,40 @@ class TossAutoService : AccessibilityService() {
 
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xAA000000.toInt()) // 반투명 검은 배경
-            val btn = Button(context).apply {
-                text = "대기중"
-                setOnClickListener { /* 동적 변경 */ }
-            }
-            addView(btn)
+            setBackgroundColor(0xAA000000.toInt())
+            visibility = View.GONE // 처음엔 숨김 상태로 시작
         }
         windowManager?.addView(floatingView, params)
     }
 
-    // 💡 앱 변경 시 버튼 텍스트와 동작을 동적으로 바꿈
     private fun updateFloatingButtons(packageName: String) {
-        val layout = floatingView as? LinearLayout ?: return
+        val layout = floatingView ?: return
+        
+        // [핵심 로직] 타겟 앱인지 확인
+        val isTargetApp = packageName.contains("toss") || 
+                          packageName.contains("tiktok") || 
+                          packageName.contains("musically.go") || 
+                          packageName.contains("cashwalk")
+
+        // 앱이 타겟 앱이면 보이고, 아니면 숨김
+        layout.visibility = if (isTargetApp) View.VISIBLE else View.GONE
+        
+        if (!isTargetApp) return // 타겟 앱이 아니면 버튼을 그리지 않음
+
         layout.removeAllViews()
 
         if (packageName.contains("toss")) {
             addButton(layout, if (isTossSwiping) "■ 토스 정지" else "▶ 토스 시작") {
                 if (isTossSwiping) stopTossSwipe() else startTossSwipeLoop()
+                updateFloatingButtons(packageName)
             }
         } else if (packageName.contains("tiktok") || packageName.contains("musically.go")) {
             addButton(layout, if (isTiktokSwiping) "■ 틱톡 정지" else "▶ 틱톡 시작") {
                 if (isTiktokSwiping) stopTiktokSwipe() else startTiktokSwipeLoop()
+                updateFloatingButtons(packageName)
             }
-        } else {
-            addButton(layout, "X 종료") { stopAll() }
+        } else if (packageName.contains("cashwalk")) {
+            addButton(layout, "캐시워크 활성화") { showToast("팝업 감지 대기 중입니다.") }
         }
     }
 
@@ -85,7 +92,8 @@ class TossAutoService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val packageName = event.packageName?.toString() ?: ""
-        if (packageName.isNotEmpty()) {
+        if (packageName.isNotEmpty() && packageName != currentPackageName) {
+            currentPackageName = packageName
             updateFloatingButtons(packageName)
         }
 
@@ -97,7 +105,7 @@ class TossAutoService : AccessibilityService() {
         }
     }
 
-    // [스와이프 로직 유지]
+    // --- 스와이프 로직 유지 ---
     private fun startTossSwipeLoop() {
         isTossSwiping = true
         tossRunnable = object : Runnable {
@@ -132,12 +140,6 @@ class TossAutoService : AccessibilityService() {
     private fun stopTiktokSwipe() {
         isTiktokSwiping = false
         tiktokRunnable?.let { handler.removeCallbacks(it) }
-    }
-
-    private fun stopAll() {
-        stopTossSwipe()
-        stopTiktokSwipe()
-        showToast("모든 동작 정지")
     }
 
     private fun swipeBelowToUp() {
