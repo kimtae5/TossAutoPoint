@@ -16,15 +16,13 @@ import android.widget.Toast
 
 class TossAutoService : AccessibilityService() {
 
-    companion object {
-        const val PKG_TOSS = "viva.republica.toss"
-        const val PKG_TIKTOK_GLOBAL = "com.zhiliaoapp.musically"
-        const val PKG_TIKTOK_KR = "com.ss.android.ugc.trill"
-        const val PKG_CASHWALK = "cashwalk.android"
-    }
-
+    private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
     private var floatingView: LinearLayout? = null
+    
+    // 동작 상태 변수
+    private var isRunning = false
+    private var swipeRunnable: Runnable? = null
     private var currentPackageName = ""
 
     override fun onServiceConnected() {
@@ -48,84 +46,85 @@ class TossAutoService : AccessibilityService() {
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xAA000000.toInt())
-            visibility = View.GONE // 처음엔 숨김
+            visibility = View.GONE
         }
         windowManager?.addView(floatingView, params)
     }
 
-    // [강화된 버튼 관리]
-    private fun updateFloatingButtons(packageName: String?) {
-        val layout = floatingView ?: return
+    override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        val pkg = event.packageName?.toString() ?: ""
         
-        // 타겟 앱 판별
-        val isTarget = packageName != null && (
-            packageName == PKG_TOSS || 
-            packageName == PKG_TIKTOK_GLOBAL || 
-            packageName == PKG_TIKTOK_KR || 
-            packageName == PKG_CASHWALK
-        )
-
-        // [핵심 해결] 타겟이 아니면 무조건 GONE (버튼 강제 삭제)
-        if (!isTarget) {
-            layout.visibility = View.GONE
-            return
+        // 1. 타겟 앱 체크 (토스, 틱톡 등)
+        val isTarget = pkg.contains("toss") || pkg.contains("tiktok") || pkg.contains("musically")
+        
+        // 2. 패키지가 바뀌었을 때 UI 갱신
+        if (pkg != currentPackageName) {
+            currentPackageName = pkg
+            
+            val layout = floatingView ?: return
+            if (isTarget) {
+                layout.visibility = View.VISIBLE
+                updateButtons(pkg)
+            } else {
+                layout.visibility = View.GONE
+                stopSwipe() // 다른 앱으로 나가면 자동 정지
+            }
         }
-
-        layout.visibility = View.VISIBLE
-        layout.removeAllViews()
-        
-        addButton(layout, "⚡ 강제 스와이프") { performForceSwipe() }
     }
 
-    private fun addButton(layout: LinearLayout, text: String, onClick: () -> Unit) {
+    private fun updateButtons(pkg: String) {
+        val layout = floatingView ?: return
+        layout.removeAllViews()
+        
         val btn = Button(this).apply {
-            this.text = text
-            setOnClickListener { onClick() }
+            text = if (isRunning) "■ 정지" else "▶ 시작"
+            setOnClickListener {
+                if (isRunning) stopSwipe() else startSwipe()
+                updateButtons(pkg) // 버튼 텍스트 바로 갱신
+            }
         }
         layout.addView(btn)
     }
 
-    private fun performForceSwipe() {
-        // 화면 해상도에 따른 좌표 계산
+    private fun startSwipe() {
+        isRunning = true
+        swipeRunnable = object : Runnable {
+            override fun run() {
+                if (isRunning) {
+                    performSwipe()
+                    handler.postDelayed(this, 2000) // 2초 간격
+                }
+            }
+        }
+        handler.post(swipeRunnable!!)
+        showToast("자동 스와이프 시작")
+    }
+
+    private fun stopSwipe() {
+        isRunning = false
+        swipeRunnable?.let { handler.removeCallbacks(it) }
+        showToast("자동 스와이프 정지")
+    }
+
+    private fun performSwipe() {
         val dm = resources.displayMetrics
         val path = Path().apply {
             moveTo(dm.widthPixels / 2f, dm.heightPixels * 0.8f)
             lineTo(dm.widthPixels / 2f, dm.heightPixels * 0.2f)
         }
-
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 300))
             .build()
-
-        // [디버깅 추가] 결과에 따른 메시지
-        val success = dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) {
-                showToast("스와이프 완료")
-            }
-            override fun onCancelled(gestureDescription: GestureDescription?) {
-                showToast("스와이프 실패: 권한 또는 앱 차단")
-            }
-        }, null)
-
-        if (!success) showToast("스와이프 요청 실패")
+        dispatchGesture(gesture, null, null)
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // [강화] 이벤트 소스에서 패키지명 추출 (null 체크)
-        val packageName = event.packageName?.toString()
-        
-        // 패키지가 바뀌었거나, 타겟 앱이 아닐 때 즉시 갱신
-        updateFloatingButtons(packageName)
-        currentPackageName = packageName ?: ""
-    }
-
-    private fun showToast(msg: String) = Handler(Looper.getMainLooper()).post { 
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() 
-    }
+    private fun showToast(msg: String) = handler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
     override fun onDestroy() {
         super.onDestroy()
+        stopSwipe()
         floatingView?.let { windowManager?.removeView(it) }
     }
+
     override fun onInterrupt() {}
 }
