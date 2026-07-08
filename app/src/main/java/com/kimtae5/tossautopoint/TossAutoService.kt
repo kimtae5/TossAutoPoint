@@ -2,11 +2,13 @@ package com.kimtae5.tossautopoint
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -16,15 +18,26 @@ import android.widget.Toast
 
 class TossAutoService : AccessibilityService() {
 
-    private val APP_VERSION = "v1.6"
+    // 버전 1.7 업데이트
+    private val APP_VERSION = "v1.7"
 
     private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
     private var floatingView: LinearLayout? = null
+    private lateinit var layoutParams: WindowManager.LayoutParams // 위치 이동을 위한 전역 변수
     
     private var isRunning = false
     private var swipeRunnable: Runnable? = null
     private var currentPackageName = ""
+
+    // 드래그 이동을 위한 변수
+    private var initialX: Int = 0
+    private var initialY: Int = 0
+    private var initialTouchX: Float = 0f
+    private var initialTouchY: Float = 0f
+
+    // 캐시워크 무한 클릭 방지용 쿨타임 변수
+    private var lastCashwalkClickTime = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -33,33 +46,32 @@ class TossAutoService : AccessibilityService() {
     }
 
     private fun createFloatingView() {
-        val params = WindowManager.LayoutParams(
+        layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
-        params.gravity = Gravity.TOP or Gravity.START
-        params.x = 100
-        params.y = 300
+        layoutParams.gravity = Gravity.TOP or Gravity.START
+        layoutParams.x = 100
+        layoutParams.y = 300
 
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xAA000000.toInt()) 
+            setBackgroundColor(Color.parseColor("#AA000000")) // 반투명 배경 (코드 안전성 위해 변경)
             visibility = View.GONE
         }
-        windowManager?.addView(floatingView, params)
+        windowManager?.addView(floatingView, layoutParams)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // [버그 수정] 이벤트 패키지명이 null일 때 강제 종료하지 않고 안전하게 처리
+        // [v1.6 뼈대 완벽 유지] 이벤트 패키지명 필터링 및 뷰 숨김 로직
         val pkg = event.packageName?.toString()
         
         if (pkg != null && pkg != currentPackageName) {
             currentPackageName = pkg
             
-            // [버그 수정] 틱톡의 진짜 패키지명(aweme) 추가
             val isTarget = pkg.contains("toss") || 
                            pkg.contains("tiktok") || 
                            pkg.contains("musically") || 
@@ -69,20 +81,34 @@ class TossAutoService : AccessibilityService() {
 
             val layout = floatingView ?: return
 
-            // [버그 수정] 타겟 앱이면 켜고, 홈 화면이나 다른 앱이면 '무조건' 숨김
             if (isTarget) {
                 layout.visibility = View.VISIBLE
                 updateButtons(pkg)
             } else {
                 layout.visibility = View.GONE
-                stopSwipe() // 버튼이 숨겨지면 동작도 무조건 정지
+                stopSwipe() 
             }
         }
 
-        if (pkg != null && pkg.contains("cashwalk")) {
+        // [v1.7 신규 추가] 캐시워크 전용 로직 (시작 버튼이 눌려있을 때만 동작)
+        if (pkg != null && pkg.contains("cashwalk") && isRunning) {
             val rootNode = rootInActiveWindow ?: return
-            if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty()) {
-                clickSpecificRatio(0.8f, 0.37f)
+            val currentTime = System.currentTimeMillis()
+
+            // 1초(1000ms) 쿨타임: 중복 클릭으로 인한 화면 멈춤 방지
+            if (currentTime - lastCashwalkClickTime > 1000) {
+                
+                // 1. [이미지 1] '적립 완료!' 팝업창 닫기 (우측 상단 X 버튼 강제 클릭)
+                if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty()) {
+                    clickSpecificRatio(0.8f, 0.38f) // 팝업창 우측 상단 X 비율
+                    lastCashwalkClickTime = currentTime
+                }
+                // 2. [이미지 2] '장소에 도착했어요!' 배너 (노란색 적립하기 우측 강제 클릭)
+                else if (rootNode.findAccessibilityNodeInfosByText("장소에 도착했어요!").isNotEmpty() ||
+                         rootNode.findAccessibilityNodeInfosByText("적립하기").isNotEmpty()) {
+                    clickSpecificRatio(0.85f, 0.82f) // 하단 노란버튼 우측 비율
+                    lastCashwalkClickTime = currentTime
+                }
             }
         }
     }
@@ -99,6 +125,38 @@ class TossAutoService : AccessibilityService() {
 
         val btn = Button(this).apply {
             text = if (isRunning) "■ $appName 정지 ($APP_VERSION)" else "▶ $appName 시작 ($APP_VERSION)"
+            
+            // [v1.7 신규 추가] 터치 및 드래그(이동) 이벤트 처리
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        // 처음 터치한 위치 기억
+                        initialX = layoutParams.x
+                        initialY = layoutParams.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        false // 클릭 이벤트가 실행될 수 있도록 false 반환
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        // 움직인 거리 계산
+                        val dx = (event.rawX - initialTouchX).toInt()
+                        val dy = (event.rawY - initialTouchY).toInt()
+                        
+                        // 일정 거리(10픽셀) 이상 움직이면 '드래그'로 인식하여 버튼 이동
+                        if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                            layoutParams.x = initialX + dx
+                            layoutParams.y = initialY + dy
+                            windowManager?.updateViewLayout(floatingView, layoutParams)
+                            true // 클릭이 실행되지 않도록 이벤트 소비
+                        } else {
+                            false
+                        }
+                    }
+                    else -> false
+                }
+            }
+            
+            // 기존 클릭 동작 유지
             setOnClickListener {
                 if (isRunning) stopSwipe() else startSwipe()
                 updateButtons(pkg) 
@@ -107,6 +165,7 @@ class TossAutoService : AccessibilityService() {
         layout.addView(btn)
     }
 
+    // [v1.6 뼈대 완벽 유지] 스와이프 로직
     private fun startSwipe() {
         isRunning = true
         swipeRunnable = object : Runnable {
@@ -141,13 +200,10 @@ class TossAutoService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 400))
             .build()
             
-        // [버그 확인용] XML에 canPerformGestures="true"가 없으면 success가 false로 나옴
-        val success = dispatchGesture(gesture, null, null)
-        if (!success) {
-            showToast("스와이프 실패! (XML 설정을 확인하세요)")
-        }
+        dispatchGesture(gesture, null, null)
     }
 
+    // 비율 기반 강제 클릭 함수
     private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
         val dm = resources.displayMetrics
         val path = Path().apply { moveTo(dm.widthPixels * ratioX, dm.heightPixels * ratioY) }
