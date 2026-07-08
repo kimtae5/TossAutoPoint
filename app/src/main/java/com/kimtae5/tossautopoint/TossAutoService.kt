@@ -18,13 +18,15 @@ import android.widget.Toast
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 1.7 업데이트
-    private val APP_VERSION = "v1.7"
+    // 빌드 에러 수정 버전
+    private val APP_VERSION = "v1.7.1"
 
     private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
     private var floatingView: LinearLayout? = null
-    private lateinit var layoutParams: WindowManager.LayoutParams // 위치 이동을 위한 전역 변수
+    
+    // 💡 [수정됨] 버튼의 layoutParams와 이름이 겹치지 않도록 명확하게 windowLayoutParams로 변경
+    private lateinit var windowLayoutParams: WindowManager.LayoutParams 
     
     private var isRunning = false
     private var swipeRunnable: Runnable? = null
@@ -46,27 +48,27 @@ class TossAutoService : AccessibilityService() {
     }
 
     private fun createFloatingView() {
-        layoutParams = WindowManager.LayoutParams(
+        // 💡 [수정됨]
+        windowLayoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
-        layoutParams.gravity = Gravity.TOP or Gravity.START
-        layoutParams.x = 100
-        layoutParams.y = 300
+        windowLayoutParams.gravity = Gravity.TOP or Gravity.START
+        windowLayoutParams.x = 100
+        windowLayoutParams.y = 300
 
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#AA000000")) // 반투명 배경 (코드 안전성 위해 변경)
+            setBackgroundColor(Color.parseColor("#AA000000")) 
             visibility = View.GONE
         }
-        windowManager?.addView(floatingView, layoutParams)
+        windowManager?.addView(floatingView, windowLayoutParams)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // [v1.6 뼈대 완벽 유지] 이벤트 패키지명 필터링 및 뷰 숨김 로직
         val pkg = event.packageName?.toString()
         
         if (pkg != null && pkg != currentPackageName) {
@@ -90,23 +92,19 @@ class TossAutoService : AccessibilityService() {
             }
         }
 
-        // [v1.7 신규 추가] 캐시워크 전용 로직 (시작 버튼이 눌려있을 때만 동작)
+        // 캐시워크 전용 로직
         if (pkg != null && pkg.contains("cashwalk") && isRunning) {
             val rootNode = rootInActiveWindow ?: return
             val currentTime = System.currentTimeMillis()
 
-            // 1초(1000ms) 쿨타임: 중복 클릭으로 인한 화면 멈춤 방지
             if (currentTime - lastCashwalkClickTime > 1000) {
-                
-                // 1. [이미지 1] '적립 완료!' 팝업창 닫기 (우측 상단 X 버튼 강제 클릭)
                 if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty()) {
-                    clickSpecificRatio(0.8f, 0.38f) // 팝업창 우측 상단 X 비율
+                    clickSpecificRatio(0.8f, 0.38f) 
                     lastCashwalkClickTime = currentTime
                 }
-                // 2. [이미지 2] '장소에 도착했어요!' 배너 (노란색 적립하기 우측 강제 클릭)
                 else if (rootNode.findAccessibilityNodeInfosByText("장소에 도착했어요!").isNotEmpty() ||
                          rootNode.findAccessibilityNodeInfosByText("적립하기").isNotEmpty()) {
-                    clickSpecificRatio(0.85f, 0.82f) // 하단 노란버튼 우측 비율
+                    clickSpecificRatio(0.85f, 0.82f) 
                     lastCashwalkClickTime = currentTime
                 }
             }
@@ -126,28 +124,26 @@ class TossAutoService : AccessibilityService() {
         val btn = Button(this).apply {
             text = if (isRunning) "■ $appName 정지 ($APP_VERSION)" else "▶ $appName 시작 ($APP_VERSION)"
             
-            // [v1.7 신규 추가] 터치 및 드래그(이동) 이벤트 처리
             setOnTouchListener { _, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        // 처음 터치한 위치 기억
-                        initialX = layoutParams.x
-                        initialY = layoutParams.y
+                        // 💡 [수정됨] windowLayoutParams 사용
+                        initialX = windowLayoutParams.x
+                        initialY = windowLayoutParams.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
-                        false // 클릭 이벤트가 실행될 수 있도록 false 반환
+                        false 
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        // 움직인 거리 계산
                         val dx = (event.rawX - initialTouchX).toInt()
                         val dy = (event.rawY - initialTouchY).toInt()
                         
-                        // 일정 거리(10픽셀) 이상 움직이면 '드래그'로 인식하여 버튼 이동
                         if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-                            layoutParams.x = initialX + dx
-                            layoutParams.y = initialY + dy
-                            windowManager?.updateViewLayout(floatingView, layoutParams)
-                            true // 클릭이 실행되지 않도록 이벤트 소비
+                            // 💡 [수정됨] windowLayoutParams 사용
+                            windowLayoutParams.x = initialX + dx
+                            windowLayoutParams.y = initialY + dy
+                            windowManager?.updateViewLayout(floatingView, windowLayoutParams)
+                            true 
                         } else {
                             false
                         }
@@ -156,7 +152,6 @@ class TossAutoService : AccessibilityService() {
                 }
             }
             
-            // 기존 클릭 동작 유지
             setOnClickListener {
                 if (isRunning) stopSwipe() else startSwipe()
                 updateButtons(pkg) 
@@ -165,7 +160,6 @@ class TossAutoService : AccessibilityService() {
         layout.addView(btn)
     }
 
-    // [v1.6 뼈대 완벽 유지] 스와이프 로직
     private fun startSwipe() {
         isRunning = true
         swipeRunnable = object : Runnable {
@@ -203,7 +197,6 @@ class TossAutoService : AccessibilityService() {
         dispatchGesture(gesture, null, null)
     }
 
-    // 비율 기반 강제 클릭 함수
     private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
         val dm = resources.displayMetrics
         val path = Path().apply { moveTo(dm.widthPixels * ratioX, dm.heightPixels * ratioY) }
