@@ -100,13 +100,14 @@ class TossAutoService : AccessibilityService() {
 
             // 1초 쿨타임
             if (currentTime - lastCashwalkClickTime > 1000) {
-                if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty()) {
-                    clickSpecificRatio(0.8f, 0.38f) 
+                if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty() ||
+                    rootNode.findAccessibilityNodeInfosByText("받은 횟수").isNotEmpty()) {
+                    clickSpecificRatio(0.82f, 0.38f) 
                     lastCashwalkClickTime = currentTime
                 }
                 else if (rootNode.findAccessibilityNodeInfosByText("장소에 도착했어요!").isNotEmpty() ||
                          rootNode.findAccessibilityNodeInfosByText("적립하기").isNotEmpty()) {
-                    clickSpecificRatio(0.85f, 0.82f) 
+                    clickSpecificRatio(0.69f, 0.79f) 
                     lastCashwalkClickTime = currentTime
                 }
             }
