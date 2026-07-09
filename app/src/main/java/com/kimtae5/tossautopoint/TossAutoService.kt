@@ -102,7 +102,7 @@ class TossAutoService : AccessibilityService() {
             if (currentTime - lastCashwalkClickTime > 1000) {
                 if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty() ||
                     rootNode.findAccessibilityNodeInfosByText("받은 횟수").isNotEmpty()) {
-                    clickSpecificRatio(0.82f, 0.38f) 
+                    clickSpecificRatio(0.81f, 0.38f) 
                     lastCashwalkClickTime = currentTime
                 }
                 else if (rootNode.findAccessibilityNodeInfosByText("장소에 도착했어요!").isNotEmpty() ||
@@ -178,8 +178,8 @@ class TossAutoService : AccessibilityService() {
                 if (isRunning) {
                     performSwipe()
                     
-                    // [수정 3 & 4] 토스면 800ms(0.8초), 아니면(틱톡) 3000ms(3초) 기본 대기 시간 설정
-                    val baseDelay = if (currentPackageName.contains("toss")) 800L else 3000L
+                    // [수정 3 & 4] 토스면 800ms(0.8초), 아니면(틱톡) 10000ms(10초) 기본 대기 시간 설정
+                    val baseDelay = if (currentPackageName.contains("toss")) 800L else 10000L
                     
                     // [수정 2] 기본 대기 시간에 100ms ~ 200ms 사이의 랜덤 시간을 더함
                     val randomDelay = Random.nextLong(100, 201) 
@@ -224,9 +224,9 @@ class TossAutoService : AccessibilityService() {
     private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
         val dm = resources.displayMetrics
         
-        // [수정 2] 캐시워크 강제 클릭 시에도 매번 같은 픽셀을 누르지 않도록 ±10픽셀 랜덤 좌표 부여
-        val targetX = (dm.widthPixels * ratioX) + Random.nextInt(-10, 11)
-        val targetY = (dm.heightPixels * ratioY) + Random.nextInt(-10, 11)
+        // [수정 2] 캐시워크 강제 클릭 시에도 매번 같은 픽셀을 누르지 않도록 ±5픽셀 랜덤 좌표 부여
+        val targetX = (dm.widthPixels * ratioX) + Random.nextInt(-5, 6)
+        val targetY = (dm.heightPixels * ratioY) + Random.nextInt(-5, 6)
         
         val path = Path().apply { moveTo(targetX, targetY) }
         
