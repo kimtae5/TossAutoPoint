@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -12,15 +13,16 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Toast
-import kotlin.random.Random // 랜덤 기능 사용을 위해 추가
+import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 1.8 업데이트: 앱별 속도 차등 및 완전 랜덤 터치 적용
-    private val APP_VERSION = "v1.8"
+    // 버전 2.0: 접근성 검사기로 추출한 고유 ID 지정 타격 모드 적용 (100% 안전)
+    private val APP_VERSION = "v2.0"
 
     private val handler = Handler(Looper.getMainLooper())
     private var windowManager: WindowManager? = null
@@ -28,17 +30,13 @@ class TossAutoService : AccessibilityService() {
     private lateinit var windowLayoutParams: WindowManager.LayoutParams 
     
     private var isRunning = false
-    private var swipeRunnable: Runnable? = null
+    private var autoRunnable: Runnable? = null
     private var currentPackageName = ""
 
-    // 드래그 이동을 위한 변수
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
     private var initialTouchY: Float = 0f
-
-    // 캐시워크 무한 클릭 방지용 쿨타임 변수
-    private var lastCashwalkClickTime = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -70,7 +68,6 @@ class TossAutoService : AccessibilityService() {
         val pkg = event.packageName?.toString()
         
         if (pkg != null && pkg != currentPackageName) {
-            // [수정 1] 앱이 전환될 때 꼬이는 것을 방지하기 위해, 패키지가 바뀌면 일단 동작을 정지시킵니다.
             stopAuto() 
             currentPackageName = pkg
             
@@ -88,28 +85,7 @@ class TossAutoService : AccessibilityService() {
                 updateButtons(pkg)
             } else {
                 layout.visibility = View.GONE
-                // 타겟 앱이 아니면 확실하게 정지
                 stopAuto() 
-            }
-        }
-
-        // [유지] 캐시워크 전용 클릭 로직 (스와이프와 무관하게 isRunning이 true면 작동)
-        if (pkg != null && pkg.contains("cashwalk") && isRunning) {
-            val rootNode = rootInActiveWindow ?: return
-            val currentTime = System.currentTimeMillis()
-
-            // 1초 쿨타임
-            if (currentTime - lastCashwalkClickTime > 1000) {
-                if (rootNode.findAccessibilityNodeInfosByText("적립 완료").isNotEmpty() ||
-                    rootNode.findAccessibilityNodeInfosByText("받은 횟수").isNotEmpty()) {
-                    clickSpecificRatio(0.81f, 0.38f) 
-                    lastCashwalkClickTime = currentTime
-                }
-                else if (rootNode.findAccessibilityNodeInfosByText("장소에 도착했어요!").isNotEmpty() ||
-                         rootNode.findAccessibilityNodeInfosByText("적립하기").isNotEmpty()) {
-                    clickSpecificRatio(0.69f, 0.79f) 
-                    lastCashwalkClickTime = currentTime
-                }
             }
         }
     }
@@ -154,7 +130,6 @@ class TossAutoService : AccessibilityService() {
             }
             
             setOnClickListener {
-                // [수정 1] 함수 이름 변경 (startSwipe -> startAuto)
                 if (isRunning) stopAuto() else startAuto(pkg)
                 updateButtons(pkg) 
             }
@@ -162,44 +137,64 @@ class TossAutoService : AccessibilityService() {
         layout.addView(btn)
     }
 
-    // [수정 1] 스와이프 전용이 아닌 '통합 자동화 시작' 함수로 변경
     private fun startAuto(pkg: String) {
         isRunning = true
         
-        // 캐시워크라면 스와이프를 반복할 필요가 없으므로 여기서 함수 종료 (클릭은 onAccessibilityEvent에서 알아서 함)
-        if (pkg.contains("cashwalk")) {
-            showToast("캐시워크 대기 모드 시작")
-            return 
-        }
-
-        // 토스나 틱톡일 경우 스와이프 무한 루프 시작
-        swipeRunnable = object : Runnable {
+        autoRunnable = object : Runnable {
             override fun run() {
                 if (isRunning) {
-                    performSwipe()
                     
-                    // [수정 3 & 4] 토스면 800ms(0.8초), 아니면(틱톡) 10000ms(10초) 기본 대기 시간 설정
-                    val baseDelay = if (currentPackageName.contains("toss")) 800L else 10000L
+                    // 1. [캐시워크 모드] ID 기반 정밀 타격 로직
+                    if (pkg.contains("cashwalk")) {
+                        val rootNode = rootInActiveWindow
+                        var nextDelay = 500L // 기본 화면 탐색 주기 (1초)
+                        
+                        if (rootNode != null) {
+                            // 사용자가 찾아낸 ID로 화면 상의 버튼 노드들을 검색
+                            val rewardButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/tvReceiverRewardButton")
+                            val closeButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivCloseButton")
+                            
+                            if (rewardButtons.isNotEmpty()) {
+                                // 1순위: '적립하기' 버튼이 보이면 정중앙 클릭
+                                clickNodeCenter(rewardButtons[0])
+                                nextDelay = 500L // 적립 후 팝업이 뜨므로 0.6초 뒤에 바로 다음 루프 실행 (X버튼 사냥용)
+                            } else if (closeButtons.isNotEmpty()) {
+                                // 2순위: 적립 완료 팝업의 'X' 버튼이 보이면 정중앙 클릭
+                                clickNodeCenter(closeButtons[0])
+                                nextDelay = 500L // 닫았으니 다시 여유롭게 1초 주기로 변경
+                            }
+                            
+                            // 메모리 누수 방지를 위한 노드 해제 (필수)
+                            rewardButtons.forEach { it.recycle() }
+                            closeButtons.forEach { it.recycle() }
+                            rootNode.recycle()
+                        }
+                        
+                        // 다음 탐색 예약 (+ 약간의 사람 같은 랜덤 딜레이 추가)
+                        handler.postDelayed(this, nextDelay + Random.nextLong(50, 151))
+                    } 
                     
-                    // [수정 2] 기본 대기 시간에 100ms ~ 200ms 사이의 랜덤 시간을 더함
-                    val randomDelay = Random.nextLong(100, 201) 
-                    
-                    handler.postDelayed(this, baseDelay + randomDelay) 
+                    // 2. [토스 / 틱톡 모드] 기존 방식대로 스와이프 실행
+                    else {
+                        performSwipe()
+                        val baseDelay = if (pkg.contains("toss")) 800L else 10000L
+                        val randomDelay = Random.nextLong(100, 201) 
+                        
+                        handler.postDelayed(this, baseDelay + randomDelay) 
+                    }
                 }
             }
         }
-        handler.post(swipeRunnable!!)
+        handler.post(autoRunnable!!)
     }
 
     private fun stopAuto() {
         isRunning = false
-        swipeRunnable?.let { handler.removeCallbacks(it) }
+        autoRunnable?.let { handler.removeCallbacks(it) }
     }
 
     private fun performSwipe() {
         val dm = resources.displayMetrics
-        
-        // [수정 2] 스와이프할 때마다 매번 똑같은 정중앙을 긋지 않도록 ±20픽셀 랜덤 좌표 부여
         val randomOffsetX = Random.nextInt(-20, 21)
         val startX = (dm.widthPixels / 2f) + randomOffsetX
         val startY = dm.heightPixels * 0.7f 
@@ -211,9 +206,7 @@ class TossAutoService : AccessibilityService() {
             lineTo(endX, endY)
         }
         
-        // [수정 2] 스와이프하는 '드래그 속도(지속 시간)' 자체도 300ms + (100~200ms 랜덤) 적용
         val duration = 300L + Random.nextLong(100, 201)
-        
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
             .build()
@@ -221,20 +214,25 @@ class TossAutoService : AccessibilityService() {
         dispatchGesture(gesture, null, null)
     }
 
-    private fun clickSpecificRatio(ratioX: Float, ratioY: Float) {
-        val dm = resources.displayMetrics
-        
-        // [수정 2] 캐시워크 강제 클릭 시에도 매번 같은 픽셀을 누르지 않도록 ±5픽셀 랜덤 좌표 부여
-        val targetX = (dm.widthPixels * ratioX) + Random.nextInt(-5, 6)
-        val targetY = (dm.heightPixels * ratioY) + Random.nextInt(-5, 6)
-        
-        val path = Path().apply { moveTo(targetX, targetY) }
-        
-        // [수정 2] 클릭 누르고 있는 짧은 순간도 완전히 똑같지 않게 50ms + 랜덤 적용
-        val clickDuration = 50L + Random.nextLong(10, 51)
-        
-        dispatchGesture(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, clickDuration)).build(), null, null)
-    }
+    p// 💡 [최종 수정본] 버튼 주변을 완벽하게 랜덤 타격하는 함수
+	private fun clickNodeCenter(node: AccessibilityNodeInfo) {
+	    val rect = Rect()
+	    node.getBoundsInScreen(rect) // 디바이스 화면 상의 버튼 사각형 좌표를 가져옴
+	    
+	    // 원래 정중앙 좌표에 사람이 누르듯 상하좌우 ±10픽셀 범위의 랜덤 편차 부여!
+	    val centerX = rect.centerX().toFloat() + Random.nextInt(-10, 11)
+	    val centerY = rect.centerY().toFloat() + Random.nextInt(-10, 11)
+	    
+	    val path = Path().apply { moveTo(centerX, centerY) }
+	    val clickDuration = 50L + Random.nextLong(10, 51) // 화면을 누르고 있는 시간도 랜덤 (0.05초~0.1초)
+	    
+	    val gesture = GestureDescription.Builder()
+	        .addStroke(GestureDescription.StrokeDescription(path, 0, clickDuration))
+	        .build()
+	        
+	    dispatchGesture(gesture, null, null)
+	}
+
 
     private fun showToast(msg: String) = handler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
