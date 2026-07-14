@@ -163,7 +163,7 @@ class TossAutoService : AccessibilityService() {
                         
                         if (rootNode != null) {
                             // 사용자가 접근성 검사기로 알아낸 정밀 ID 부품 확보
-                            val rewardButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/tvReceiverRewardButton")
+                            val rewardButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/tvReceiveRewardButton")
                             val closeButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivCloseButton")
                             
                             if (rewardButtons.isNotEmpty()) {
