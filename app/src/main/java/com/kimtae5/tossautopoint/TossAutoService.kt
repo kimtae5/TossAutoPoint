@@ -21,8 +21,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.5: 광고 블랙리스트 삭제 및 순수 '좌표 기반' 타겟팅 적용
-    private val APP_VERSION = "v2.5"
+    // 버전 2.6: 보물상자/광고닫기 추가 및 각 앱별 탐색/동작 타이머 전면 개편
+    private val APP_VERSION = "v2.6"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -198,30 +198,58 @@ class TossAutoService : AccessibilityService() {
                         if (rootNode != null) {
                             // 1. 타겟 ID를 가진 요소를 모조리 찾습니다. (이때 하단 광고의 닫기 버튼도 포함될 수 있음)
                             val rewardButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/tvReceiveRewardButton")
-                            val closeButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivCloseButton")
+                            val locationCloseButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivCloseButton")
+                            val treasureBoxes = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/coinbox")
+                            val adCloseButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivClose")
                             
-                            if (rewardButtons.isNotEmpty()) {
-                                // 적립하기 버튼이 포착되면 정중앙(주변랜덤) 클릭!
-                                clickNodeCenter(rewardButtons[0])
-                                nextDelay = 500L // 팝업창이 바로 뜨므로 다음 사냥은 0.6초 뒤에 광속 실행
-                            } else if (closeButtons.isNotEmpty()) {
-                                // 적립 완료 후 팝업의 X 버튼이 포착되면 바로 클릭!
-                                clickNodeCenter(closeButtons[0])
-                                nextDelay = 500L // 창을 닫았으니 다시 여유롭게 1초 주기로 탐색 변경
+                            // 한 번의 루프(0.5초)당 한 번만 클릭하도록 제어하는 스위치입니다.
+                            var isClickedInThisLoop = false
+
+                            // [1순위 행동: 방해물 치우기] 화면에 광고 X 버튼이 있으면 가장 먼저 눌러서 창을 닫습니다.
+                            if (!isClickedInThisLoop) {
+                                for (button in adCloseButtons) {
+                                    if (isSafeLocation(button)) {
+                                        clickNodeCenter(button)
+                                        isClickedInThisLoop = true
+                                        break
+                                    }
+                                }
                             }
-                            
-                            // 3. 찾은 'X(닫기)' 버튼 중 안전한 위치에 있는 진짜 버튼만 골라냅니다.
-                            for (button in closeButtons) {
-                                if (isSafeLocation(button)) {
-                                    clickNodeCenter(button)
-                                    nextDelay = 500L // 창을 닫았으니 다시 1초 대기 모드로 돌아갑니다.
-                                    break
+                            if (!isClickedInThisLoop) {
+                                for (button in locationCloseButtons) {
+                                    if (isSafeLocation(button)) {
+                                        clickNodeCenter(button)
+                                        isClickedInThisLoop = true
+                                        break
+                                    }
+                                }
+                            }
+
+                            // [2순위 행동: 보상 얻기] 닫을 창이 없다면, 보물상자나 주변 산책 적립 버튼을 누릅니다.
+                            if (!isClickedInThisLoop) {
+                                for (button in treasureBoxes) {
+                                    if (isSafeLocation(button)) {
+                                        clickNodeCenter(button)
+                                        isClickedInThisLoop = true
+                                        break
+                                    }
+                                }
+                            }
+                            if (!isClickedInThisLoop) {
+                                for (button in rewardButtons) {
+                                    if (isSafeLocation(button)) {
+                                        clickNodeCenter(button)
+                                        isClickedInThisLoop = true
+                                        break
+                                    }
                                 }
                             }
                             
                             // 안드로이드 메모리가 꽉 차는 것을 막기 위해 다 쓴 뼈대 정보는 쓰레기통에 버립니다(recycle).
                             rewardButtons.forEach { it.recycle() }
-                            closeButtons.forEach { it.recycle() }
+                            locationCloseButtons.forEach { it.recycle() }
+                            treasureBoxes.forEach { it.recycle() }
+                            adCloseButtons.forEach { it.recycle() }
                             rootNode.recycle()
                         }
                         
