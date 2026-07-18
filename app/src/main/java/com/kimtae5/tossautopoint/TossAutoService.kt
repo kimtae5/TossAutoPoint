@@ -2,12 +2,15 @@ package com.kimtae5.tossautopoint
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Path
 import android.graphics.Rect // 버튼의 네모 박스 좌표를 구하기 위해 필요합니다.
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -21,8 +24,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.7: 투명 가짜 부품(Invisible Node) 필터링 및 적립 우선순위 변경
-    private val APP_VERSION = "v2.7"
+    // 버전 2.10: 노드 탐색 불가 마커 대응 -> 화면 캡처 후 픽셀 색상(진한 파란색) 기반 좌표 타격 로직 추가
+    private val APP_VERSION = "v2.10"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -45,7 +48,11 @@ class TossAutoService : AccessibilityService() {
     // 현재 스마트폰 화면에 떠 있는 앱의 패키지 이름을 저장합니다.
     private var currentPackageName = ""
 
-    // 사용자가 버튼을 드래그해서 옮길 때, 처음 터치한 위치를 기억하는 변수들입니다.
+    // 1회용 스위치: 파란 네모를 눌렀는지 기억합니다.
+    private var isMapPinClicked = false 
+    // 캡처 중복 방지: 스크린샷 처리가 진행 중일 때 또 캡처하는 것을 막습니다.
+    private var isCapturing = false 
+
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
@@ -101,7 +108,10 @@ class TossAutoService : AccessibilityService() {
             stopAuto() // 안전을 위해 무조건 돌고 있던 매크로를 정지시킵니다.
             currentPackageName = pkg
             
-            // 이 앱이 우리가 목표로 하는 앱(토스, 틱톡, 캐시워크)인지 확인합니다.
+            if (pkg.contains("cashwalk")) {
+                isMapPinClicked = false // 캐시워크 진입 시 다시 스위치 켜기
+            }
+            
             val isTarget = pkg.contains("toss") || 
                            pkg.contains("tiktok") || 
                            pkg.contains("musically") || 
@@ -205,7 +215,72 @@ class TossAutoService : AccessibilityService() {
                             // 한 번의 루프(0.5초)당 한 번만 클릭하도록 제어하는 스위치입니다.
                             var isClickedInThisLoop = false
 
-                            // [1순위 행동: 방해물 치우기] 화면에 광고 X 버튼이 있으면 가장 먼저 눌러서 창을 닫습니다.
+                            // ---------------------------------------------------------
+                            // [0순위: 파란색 네모 마커 색상 탐색 및 1회 타격]
+                            // ---------------------------------------------------------
+                            // 안드로이드 11(API 30) 이상에서만 화면 캡처 기능을 사용할 수 있습니다.
+                            if (!isMapPinClicked && !isClickedInThisLoop && !isCapturing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                isCapturing = true
+                                
+                                takeScreenshot(Display.DEFAULT_DISPLAY, applicationContext.mainExecutor, object : TakeScreenshotCallback {
+                                    override fun onSuccess(screenshot: ScreenshotResult) {
+                                        try {
+                                            val hwBuffer = screenshot.hardwareBuffer
+                                            val bitmap = Bitmap.wrapHardwareBuffer(hwBuffer, screenshot.colorSpace)
+                                            
+                                            if (bitmap != null) {
+                                                val width = bitmap.width
+                                                val height = bitmap.height
+                                                
+                                                // 탐색 구역: 상단 10% 제외, 하단 85% 제한
+                                                val startY = (height * 0.1).toInt()
+                                                val limitY = (height * 0.85).toInt()
+                                                
+                                                var foundX = -1
+                                                var foundY = -1
+                                                
+                                                // 속도를 위해 10픽셀씩 건너뛰며 스캔 (고속 레이더)
+                                                for (y in startY until limitY step 10) {
+                                                    for (x in 0 until width step 10) {
+                                                        val pixel = bitmap.getPixel(x, y)
+                                                        val r = Color.red(pixel)
+                                                        val g = Color.green(pixel)
+                                                        val b = Color.blue(pixel)
+                                                        
+                                                        // 💡 진한 파란색 판별 (파란색 값이 높고, 빨강/초록 값이 낮을 때)
+                                                        // 혹시 연하늘색 체크표시나 다른 버튼이 눌린다면 r과 g의 제한(100)을 더 낮추거나 b(180)를 더 높이시면 됩니다.
+                                                        if (b > 180 && r < 100 && g < 120) {
+                                                            foundX = x
+                                                            foundY = y
+                                                            break
+                                                        }
+                                                    }
+                                                    if (foundX != -1) break
+                                                }
+                                                
+                                                if (foundX != -1 && foundY != -1) {
+                                                    clickCoordinate(foundX.toFloat(), foundY.toFloat())
+                                                    isMapPinClicked = true // 스위치 끄기
+                                                    showToast("파란색 마커 색상 감지 완료!")
+                                                }
+                                            }
+                                            hwBuffer.close() // 메모리 누수 방지
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        } finally {
+                                            isCapturing = false
+                                        }
+                                    }
+
+                                    override fun onFailure(errorCode: Int) {
+                                        isCapturing = false
+                                    }
+                                })
+                            }
+
+                            // ---------------------------------------------------------
+                            // [1순위: 광고 창 닫기] 
+                            // ---------------------------------------------------------
                             if (!isClickedInThisLoop) {
                                 for (button in adCloseButtons) {
                                     if (isSafeLocation(button)) {
@@ -225,10 +300,14 @@ class TossAutoService : AccessibilityService() {
                                 }
                             }
 
-                            // [2순위: '적립하기' 누르기] 보물상자보다 적립하기를 먼저 확인하여 보상을 놓치지 않게 합니다.
+                            // ---------------------------------------------------------
+                            // [2순위: '적립하기' 누르기] (확실한 고유 버튼이므로 위치 필터 해제!)
+                            // ---------------------------------------------------------
                             if (!isClickedInThisLoop) {
                                 for (button in rewardButtons) {
-                                    if (isSafeLocation(button)) {
+                                    // 하단에 있든 어디에 있든 투명한 가짜 버튼만 아니면 무조건 클릭!
+                                    // 0.5초마다 추적하므로, 올라오는 중이라도 다음 0.5초 뒤에 멈춘 위치를 정확히 찍습니다.
+                                    if (button.isVisibleToUser) { 
                                         clickNodeCenter(button)
                                         isClickedInThisLoop = true
                                         break
@@ -236,10 +315,12 @@ class TossAutoService : AccessibilityService() {
                                 }
                             }
                             
-                            // [3순위: '보물상자' 누르기] 가장 마지막에 남은 보물상자를 엽니다.
+                            // ---------------------------------------------------------
+                            // [3순위: '보물상자' 누르기] (확실한 고유 버튼이므로 위치 필터 해제!)
+                            // ---------------------------------------------------------
                             if (!isClickedInThisLoop) {
                                 for (button in treasureBoxes) {
-                                    if (isSafeLocation(button)) {
+                                    if (button.isVisibleToUser) { // 위치 필터 검사 X, 보이는지만 검사 O
                                         clickNodeCenter(button)
                                         isClickedInThisLoop = true
                                         break
@@ -317,9 +398,7 @@ class TossAutoService : AccessibilityService() {
         dispatchGesture(gesture, null, null)
     }
 
-    // -------------------------------------------------------------
-    // 8. [신규 핵심] 버튼이 하단 광고 영역에 있는지 좌표로 걸러내는 판별 함수
-    // -------------------------------------------------------------
+    // [광고용 X버튼 전용] 화면 상위 85% 안전 구역에 있는지, 그리고 눈에 보이는지 확인합니다.
     private fun isSafeLocation(node: AccessibilityNodeInfo): Boolean {
         // 화면에 보이지 않는 투명한 찌꺼기 부품이면 무조건 무시(false)합니다!
         if (!node.isVisibleToUser) {
@@ -348,13 +427,15 @@ class TossAutoService : AccessibilityService() {
     private fun clickNodeCenter(node: AccessibilityNodeInfo) {
         val rect = Rect()
         node.getBoundsInScreen(rect) 
+        clickCoordinate(rect.centerX().toFloat(), rect.centerY().toFloat())
+    }
+    
+    // 💡 [신규 함수] 찾아낸 X, Y 좌표를 직접 화면에 터치하는 함수입니다.
+    private fun clickCoordinate(x: Float, y: Float) {
+        val tweakX = x + Random.nextInt(-2, 3)
+        val tweakY = y + Random.nextInt(-2, 3)
         
-        // 기계처럼 정중앙 픽셀만 누르는 행위를 방지하기 위해 상하좌우 ±2픽셀 편차를 주어 주변을 무작위 타격!
-        val centerX = rect.centerX().toFloat() + Random.nextInt(-2, 3)
-        val centerY = rect.centerY().toFloat() + Random.nextInt(-2, 3)
-        
-        val path = Path().apply { moveTo(centerX, centerY) }
-        
+        val path = Path().apply { moveTo(tweakX, tweakY) }
         // 누르고 있는 시간조차 0.05초~0.1초 사이로 미세하게 무작위 조절합니다.
         val clickDuration = 50L + Random.nextLong(10, 51) 
         
