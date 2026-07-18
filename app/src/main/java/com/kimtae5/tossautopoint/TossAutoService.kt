@@ -21,8 +21,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.6: 보물상자/광고닫기 추가 및 각 앱별 탐색/동작 타이머 전면 개편
-    private val APP_VERSION = "v2.6"
+    // 버전 2.7: 투명 가짜 부품(Invisible Node) 필터링 및 적립 우선순위 변경
+    private val APP_VERSION = "v2.7"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -225,9 +225,9 @@ class TossAutoService : AccessibilityService() {
                                 }
                             }
 
-                            // [2순위 행동: 보상 얻기] 닫을 창이 없다면, 보물상자나 주변 산책 적립 버튼을 누릅니다.
+                            // [2순위: '적립하기' 누르기] 보물상자보다 적립하기를 먼저 확인하여 보상을 놓치지 않게 합니다.
                             if (!isClickedInThisLoop) {
-                                for (button in treasureBoxes) {
+                                for (button in rewardButtons) {
                                     if (isSafeLocation(button)) {
                                         clickNodeCenter(button)
                                         isClickedInThisLoop = true
@@ -235,8 +235,10 @@ class TossAutoService : AccessibilityService() {
                                     }
                                 }
                             }
+                            
+                            // [3순위: '보물상자' 누르기] 가장 마지막에 남은 보물상자를 엽니다.
                             if (!isClickedInThisLoop) {
-                                for (button in rewardButtons) {
+                                for (button in treasureBoxes) {
                                     if (isSafeLocation(button)) {
                                         clickNodeCenter(button)
                                         isClickedInThisLoop = true
@@ -319,6 +321,11 @@ class TossAutoService : AccessibilityService() {
     // 8. [신규 핵심] 버튼이 하단 광고 영역에 있는지 좌표로 걸러내는 판별 함수
     // -------------------------------------------------------------
     private fun isSafeLocation(node: AccessibilityNodeInfo): Boolean {
+        // 화면에 보이지 않는 투명한 찌꺼기 부품이면 무조건 무시(false)합니다!
+        if (!node.isVisibleToUser) {
+            return false
+        }
+        
         val rect = Rect()
         // 대상 버튼의 화면상 좌상단, 우하단 픽셀 좌표를 구해서 rect에 넣습니다.
         node.getBoundsInScreen(rect)
