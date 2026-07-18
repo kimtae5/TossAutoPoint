@@ -24,8 +24,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.11: 스크린샷 픽셀 추출 강제종료(Crash) 버그 수정 및 메모리 누수 방지
-    private val APP_VERSION = "v2.11"
+    // 버전 2.12: 메인 스레드 과부하(ANR) 강제 종료 방지를 위한 백그라운드 스레드 처리 적용
+    private val APP_VERSION = "v2.12"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -224,61 +224,62 @@ class TossAutoService : AccessibilityService() {
                                 
                                 takeScreenshot(Display.DEFAULT_DISPLAY, applicationContext.mainExecutor, object : TakeScreenshotCallback {
                                     override fun onSuccess(screenshot: ScreenshotResult) {
-                                        try {
-                                            val hwBuffer = screenshot.hardwareBuffer
-                                            // 1. 시스템에서 준 하드웨어 비트맵을 받습니다.
-                                            val hwBitmap = Bitmap.wrapHardwareBuffer(hwBuffer, screenshot.colorSpace)
-                                            
-                                            if (hwBitmap != null) {
-                                                // 💡 핵심 해결: 하드웨어 비트맵을 픽셀 읽기가 가능한 '일반 비트맵(ARGB_8888)'으로 복사합니다!
-                                                val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                        // 💡 해결책: 무거운 이미지 처리를 별도의 스레드(Thread)로 빼내어 앱 멈춤을 방지합니다.
+                                        Thread {
+                                            try {
+                                                val hwBuffer = screenshot.hardwareBuffer
+                                                val hwBitmap = Bitmap.wrapHardwareBuffer(hwBuffer, screenshot.colorSpace)
                                                 
-                                                if (swBitmap != null) {
-                                                    val width = swBitmap.width
-                                                    val height = swBitmap.height
+                                                if (hwBitmap != null) {
+                                                    val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
                                                     
-                                                    val startY = (height * 0.1).toInt()
-                                                    val limitY = (height * 0.85).toInt()
-                                                    
-                                                    var foundX = -1
-                                                    var foundY = -1
-                                                    
-                                                    for (y in startY until limitY step 10) {
-                                                        for (x in 0 until width step 10) {
-                                                            // 이제 강제 종료 없이 안전하게 색상을 읽어올 수 있습니다.
-                                                            val pixel = swBitmap.getPixel(x, y)
-                                                            val r = Color.red(pixel)
-                                                            val g = Color.green(pixel)
-                                                            val b = Color.blue(pixel)
-                                                            
-                                                            // 진한 파란색 찾기 로직
-                                                            if (b > 180 && r < 100 && g < 120) {
-                                                                foundX = x
-                                                                foundY = y
-                                                                break
+                                                    if (swBitmap != null) {
+                                                        val width = swBitmap.width
+                                                        val height = swBitmap.height
+                                                        
+                                                        val startY = (height * 0.1).toInt()
+                                                        val limitY = (height * 0.85).toInt()
+                                                        
+                                                        var foundX = -1
+                                                        var foundY = -1
+                                                        
+                                                        // 픽셀 스캔 진행 (이제 아무리 오래 걸려도 앱이 죽지 않습니다)
+                                                        for (y in startY until limitY step 10) {
+                                                            for (x in 0 until width step 10) {
+                                                                val pixel = swBitmap.getPixel(x, y)
+                                                                val r = Color.red(pixel)
+                                                                val g = Color.green(pixel)
+                                                                val b = Color.blue(pixel)
+                                                                
+                                                                if (b > 180 && r < 100 && g < 120) {
+                                                                    foundX = x
+                                                                    foundY = y
+                                                                    break
+                                                                }
+                                                            }
+                                                            if (foundX != -1) break
+                                                        }
+                                                        
+                                                        // 색상을 찾았다면 메인 스레드에게 클릭해 달라고 요청합니다.
+                                                        if (foundX != -1 && foundY != -1) {
+                                                            handler.post {
+                                                                clickCoordinate(foundX.toFloat(), foundY.toFloat())
+                                                                isMapPinClicked = true 
+                                                                showToast("파란색 마커 색상 감지 완료!")
                                                             }
                                                         }
-                                                        if (foundX != -1) break
+                                                        swBitmap.recycle()
                                                     }
-                                                    
-                                                    if (foundX != -1 && foundY != -1) {
-                                                        clickCoordinate(foundX.toFloat(), foundY.toFloat())
-                                                        isMapPinClicked = true 
-                                                        showToast("파란색 마커 색상 감지 완료!")
-                                                    }
-                                                    // 💡 메모리 확보: 다 쓴 복사본 이미지를 즉시 파기합니다.
-                                                    swBitmap.recycle()
+                                                    hwBitmap.recycle()
                                                 }
-                                                // 💡 메모리 확보: 원본 하드웨어 비트맵도 파기합니다.
-                                                hwBitmap.recycle()
+                                                hwBuffer.close() 
+                                            } catch (e: Exception) {
+                                                e.printStackTrace()
+                                            } finally {
+                                                // 다음 캡처를 위해 잠금을 해제합니다.
+                                                isCapturing = false
                                             }
-                                            // 💡 메모리 확보: 하드웨어 버퍼를 닫아줍니다.
-                                            hwBuffer.close() 
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
-                                        } finally {
-                                            isCapturing = false
-                                        }
+                                        }.start()
                                     }
 
                                     override fun onFailure(errorCode: Int) {
