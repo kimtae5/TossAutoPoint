@@ -2,15 +2,12 @@ package com.kimtae5.tossautopoint
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Path
 import android.graphics.Rect // 버튼의 네모 박스 좌표를 구하기 위해 필요합니다.
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -24,8 +21,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.12: 메인 스레드 과부하(ANR) 강제 종료 방지를 위한 백그라운드 스레드 처리 적용
-    private val APP_VERSION = "v2.12"
+    // 버전 2.8: 서랍 애니메이션 대응 및 고유 버튼(적립/보물상자) 위치 필터 해제
+    private val APP_VERSION = "v2.8"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -41,7 +38,6 @@ class TossAutoService : AccessibilityService() {
     
     // 현재 자동 클릭/스와이프가 실행 중인지 체크하는 스위치 역할의 변수입니다.
     private var isRunning = false
-    
     // 자동화 작업을 반복해서 실행하게 해주는 Runnable 객체입니다.
     private var autoRunnable: Runnable? = null
     
@@ -63,7 +59,6 @@ class TossAutoService : AccessibilityService() {
     // -------------------------------------------------------------
     override fun onServiceConnected() {
         super.onServiceConnected()
-        // 안드로이드 시스템으로부터 윈도우 매니저 권한을 가져옵니다.
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         // 화면에 띄울 플로팅 버튼 레이아웃을 생성합니다.
         createFloatingView()
@@ -73,26 +68,22 @@ class TossAutoService : AccessibilityService() {
     // 2. 화면 위에 둥둥 떠 있는(Floating) 레이아웃 생성
     // -------------------------------------------------------------
     private fun createFloatingView() {
-        // 버튼을 화면 최상단에 그리기 위한 속성들을 세팅합니다.
         windowLayoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, // 내용물 크기에 맞춤
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, // 다른 앱 위에 그리기
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, // 버튼 바깥을 터치해도 다른 앱이 작동하게 함
-            PixelFormat.TRANSLUCENT // 반투명 설정
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
         )
-        // 화면 좌측 상단을 기준으로 시작 위치를 잡습니다.
         windowLayoutParams.gravity = Gravity.TOP or Gravity.START
-        windowLayoutParams.x = 100 // X 좌표 (오른쪽으로 100만큼)
-        windowLayoutParams.y = 300 // Y 좌표 (아래로 300만큼)
+        windowLayoutParams.x = 100
+        windowLayoutParams.y = 300
 
-        // 실제 레이아웃(껍데기)을 만들고 색상을 반투명 검은색으로 칠합니다.
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#AA000000")) 
-            visibility = View.GONE // 처음에는 숨겨둡니다. (타겟 앱이 켜지면 보여짐)
+            visibility = View.GONE 
         }
-        // 완성된 레이아웃을 화면에 등록합니다.
         windowManager?.addView(floatingView, windowLayoutParams)
     }
 
@@ -100,17 +91,12 @@ class TossAutoService : AccessibilityService() {
     // 3. 스마트폰 화면이 변할 때마다(이벤트 발생 시) 호출되는 핵심 함수
     // -------------------------------------------------------------
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // 현재 화면에 뜬 앱의 이름을 가져옵니다. (예: com.toss.app)
         val pkg = event.packageName?.toString()
         
         // 새로운 앱이 화면에 나타났다면?
         if (pkg != null && pkg != currentPackageName) {
             stopAuto() // 안전을 위해 무조건 돌고 있던 매크로를 정지시킵니다.
             currentPackageName = pkg
-            
-            if (pkg.contains("cashwalk")) {
-                isMapPinClicked = false // 캐시워크 진입 시 다시 스위치 켜기
-            }
             
             val isTarget = pkg.contains("toss") || 
                            pkg.contains("tiktok") || 
@@ -216,80 +202,7 @@ class TossAutoService : AccessibilityService() {
                             var isClickedInThisLoop = false
 
                             // ---------------------------------------------------------
-                            // [0순위: 파란색 네모 마커 색상 탐색 및 1회 타격]
-                            // ---------------------------------------------------------
-                            // 안드로이드 11(API 30) 이상에서만 화면 캡처 기능을 사용할 수 있습니다.
-                            if (!isMapPinClicked && !isClickedInThisLoop && !isCapturing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                isCapturing = true
-                                
-                                takeScreenshot(Display.DEFAULT_DISPLAY, applicationContext.mainExecutor, object : TakeScreenshotCallback {
-                                    override fun onSuccess(screenshot: ScreenshotResult) {
-                                        // 💡 해결책: 무거운 이미지 처리를 별도의 스레드(Thread)로 빼내어 앱 멈춤을 방지합니다.
-                                        Thread {
-                                            try {
-                                                val hwBuffer = screenshot.hardwareBuffer
-                                                val hwBitmap = Bitmap.wrapHardwareBuffer(hwBuffer, screenshot.colorSpace)
-                                                
-                                                if (hwBitmap != null) {
-                                                    val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
-                                                    
-                                                    if (swBitmap != null) {
-                                                        val width = swBitmap.width
-                                                        val height = swBitmap.height
-                                                        
-                                                        val startY = (height * 0.1).toInt()
-                                                        val limitY = (height * 0.85).toInt()
-                                                        
-                                                        var foundX = -1
-                                                        var foundY = -1
-                                                        
-                                                        // 픽셀 스캔 진행 (이제 아무리 오래 걸려도 앱이 죽지 않습니다)
-                                                        for (y in startY until limitY step 10) {
-                                                            for (x in 0 until width step 10) {
-                                                                val pixel = swBitmap.getPixel(x, y)
-                                                                val r = Color.red(pixel)
-                                                                val g = Color.green(pixel)
-                                                                val b = Color.blue(pixel)
-                                                                
-                                                                if (b > 180 && r < 100 && g < 120) {
-                                                                    foundX = x
-                                                                    foundY = y
-                                                                    break
-                                                                }
-                                                            }
-                                                            if (foundX != -1) break
-                                                        }
-                                                        
-                                                        // 색상을 찾았다면 메인 스레드에게 클릭해 달라고 요청합니다.
-                                                        if (foundX != -1 && foundY != -1) {
-                                                            handler.post {
-                                                                clickCoordinate(foundX.toFloat(), foundY.toFloat())
-                                                                isMapPinClicked = true 
-                                                                showToast("파란색 마커 색상 감지 완료!")
-                                                            }
-                                                        }
-                                                        swBitmap.recycle()
-                                                    }
-                                                    hwBitmap.recycle()
-                                                }
-                                                hwBuffer.close() 
-                                            } catch (e: Exception) {
-                                                e.printStackTrace()
-                                            } finally {
-                                                // 다음 캡처를 위해 잠금을 해제합니다.
-                                                isCapturing = false
-                                            }
-                                        }.start()
-                                    }
-
-                                    override fun onFailure(errorCode: Int) {
-                                        isCapturing = false
-                                    }
-                                })
-                            }
-
-                            // ---------------------------------------------------------
-                            // [1순위: 광고 창 닫기] 
+                            // [1순위: 광고 창 닫기] (X버튼은 하단 광고와 겹칠 수 있으니 85% 안전구역 필터 유지!)
                             // ---------------------------------------------------------
                             if (!isClickedInThisLoop) {
                                 for (button in adCloseButtons) {
@@ -434,16 +347,11 @@ class TossAutoService : AccessibilityService() {
     private fun clickNodeCenter(node: AccessibilityNodeInfo) {
         val rect = Rect()
         node.getBoundsInScreen(rect) 
-        clickCoordinate(rect.centerX().toFloat(), rect.centerY().toFloat())
-    }
-    
-    // 💡 [신규 함수] 찾아낸 X, Y 좌표를 직접 화면에 터치하는 함수입니다.
-    private fun clickCoordinate(x: Float, y: Float) {
-        val tweakX = x + Random.nextInt(-2, 3)
-        val tweakY = y + Random.nextInt(-2, 3)
         
-        val path = Path().apply { moveTo(tweakX, tweakY) }
-        // 누르고 있는 시간조차 0.05초~0.1초 사이로 미세하게 무작위 조절합니다.
+        val centerX = rect.centerX().toFloat() + Random.nextInt(-10, 11)
+        val centerY = rect.centerY().toFloat() + Random.nextInt(-10, 11)
+        
+        val path = Path().apply { moveTo(centerX, centerY) }
         val clickDuration = 50L + Random.nextLong(10, 51) 
         
         val gesture = GestureDescription.Builder()
