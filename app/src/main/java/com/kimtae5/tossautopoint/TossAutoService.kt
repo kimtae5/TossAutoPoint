@@ -24,8 +24,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.10: 노드 탐색 불가 마커 대응 -> 화면 캡처 후 픽셀 색상(진한 파란색) 기반 좌표 타격 로직 추가
-    private val APP_VERSION = "v2.10"
+    // 버전 2.11: 스크린샷 픽셀 추출 강제종료(Crash) 버그 수정 및 메모리 누수 방지
+    private val APP_VERSION = "v2.11"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -226,45 +226,54 @@ class TossAutoService : AccessibilityService() {
                                     override fun onSuccess(screenshot: ScreenshotResult) {
                                         try {
                                             val hwBuffer = screenshot.hardwareBuffer
-                                            val bitmap = Bitmap.wrapHardwareBuffer(hwBuffer, screenshot.colorSpace)
+                                            // 1. 시스템에서 준 하드웨어 비트맵을 받습니다.
+                                            val hwBitmap = Bitmap.wrapHardwareBuffer(hwBuffer, screenshot.colorSpace)
                                             
-                                            if (bitmap != null) {
-                                                val width = bitmap.width
-                                                val height = bitmap.height
+                                            if (hwBitmap != null) {
+                                                // 💡 핵심 해결: 하드웨어 비트맵을 픽셀 읽기가 가능한 '일반 비트맵(ARGB_8888)'으로 복사합니다!
+                                                val swBitmap = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
                                                 
-                                                // 탐색 구역: 상단 10% 제외, 하단 85% 제한
-                                                val startY = (height * 0.1).toInt()
-                                                val limitY = (height * 0.85).toInt()
-                                                
-                                                var foundX = -1
-                                                var foundY = -1
-                                                
-                                                // 속도를 위해 10픽셀씩 건너뛰며 스캔 (고속 레이더)
-                                                for (y in startY until limitY step 10) {
-                                                    for (x in 0 until width step 10) {
-                                                        val pixel = bitmap.getPixel(x, y)
-                                                        val r = Color.red(pixel)
-                                                        val g = Color.green(pixel)
-                                                        val b = Color.blue(pixel)
-                                                        
-                                                        // 💡 진한 파란색 판별 (파란색 값이 높고, 빨강/초록 값이 낮을 때)
-                                                        // 혹시 연하늘색 체크표시나 다른 버튼이 눌린다면 r과 g의 제한(100)을 더 낮추거나 b(180)를 더 높이시면 됩니다.
-                                                        if (b > 180 && r < 100 && g < 120) {
-                                                            foundX = x
-                                                            foundY = y
-                                                            break
+                                                if (swBitmap != null) {
+                                                    val width = swBitmap.width
+                                                    val height = swBitmap.height
+                                                    
+                                                    val startY = (height * 0.1).toInt()
+                                                    val limitY = (height * 0.85).toInt()
+                                                    
+                                                    var foundX = -1
+                                                    var foundY = -1
+                                                    
+                                                    for (y in startY until limitY step 10) {
+                                                        for (x in 0 until width step 10) {
+                                                            // 이제 강제 종료 없이 안전하게 색상을 읽어올 수 있습니다.
+                                                            val pixel = swBitmap.getPixel(x, y)
+                                                            val r = Color.red(pixel)
+                                                            val g = Color.green(pixel)
+                                                            val b = Color.blue(pixel)
+                                                            
+                                                            // 진한 파란색 찾기 로직
+                                                            if (b > 180 && r < 100 && g < 120) {
+                                                                foundX = x
+                                                                foundY = y
+                                                                break
+                                                            }
                                                         }
+                                                        if (foundX != -1) break
                                                     }
-                                                    if (foundX != -1) break
+                                                    
+                                                    if (foundX != -1 && foundY != -1) {
+                                                        clickCoordinate(foundX.toFloat(), foundY.toFloat())
+                                                        isMapPinClicked = true 
+                                                        showToast("파란색 마커 색상 감지 완료!")
+                                                    }
+                                                    // 💡 메모리 확보: 다 쓴 복사본 이미지를 즉시 파기합니다.
+                                                    swBitmap.recycle()
                                                 }
-                                                
-                                                if (foundX != -1 && foundY != -1) {
-                                                    clickCoordinate(foundX.toFloat(), foundY.toFloat())
-                                                    isMapPinClicked = true // 스위치 끄기
-                                                    showToast("파란색 마커 색상 감지 완료!")
-                                                }
+                                                // 💡 메모리 확보: 원본 하드웨어 비트맵도 파기합니다.
+                                                hwBitmap.recycle()
                                             }
-                                            hwBuffer.close() // 메모리 누수 방지
+                                            // 💡 메모리 확보: 하드웨어 버퍼를 닫아줍니다.
+                                            hwBuffer.close() 
                                         } catch (e: Exception) {
                                             e.printStackTrace()
                                         } finally {
@@ -400,10 +409,7 @@ class TossAutoService : AccessibilityService() {
 
     // [광고용 X버튼 전용] 화면 상위 85% 안전 구역에 있는지, 그리고 눈에 보이는지 확인합니다.
     private fun isSafeLocation(node: AccessibilityNodeInfo): Boolean {
-        // 화면에 보이지 않는 투명한 찌꺼기 부품이면 무조건 무시(false)합니다!
-        if (!node.isVisibleToUser) {
-            return false
-        }
+        if (!node.isVisibleToUser) return false
         
         val rect = Rect()
         // 대상 버튼의 화면상 좌상단, 우하단 픽셀 좌표를 구해서 rect에 넣습니다.
