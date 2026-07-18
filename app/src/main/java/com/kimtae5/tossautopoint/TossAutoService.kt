@@ -5,7 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Path
-import android.graphics.Rect // 버튼의 사각형 좌표를 계산하기 위해 추가
+import android.graphics.Rect // 버튼의 네모 박스 좌표를 구하기 위해 필요합니다.
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -17,66 +17,91 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Toast
-import kotlin.random.Random // 사람 같은 랜덤 값 적용을 위해 추가
+import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.1: 중괄호 컴파일 에러 해결 및 완전한 랜덤 타격 반영 완료 버전
-    private val APP_VERSION = "v2.1"
+    // 버전 2.5: 광고 블랙리스트 삭제 및 순수 '좌표 기반' 타겟팅 적용
+    private val APP_VERSION = "v2.5"
 
+    // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
+    
+    // 화면 위에 다른 뷰를 띄우기 위한 윈도우 매니저입니다.
     private var windowManager: WindowManager? = null
+    
+    // 시작/정지 버튼이 들어갈 투명한 네모 상자(레이아웃)입니다.
     private var floatingView: LinearLayout? = null
+    
+    // 플로팅 버튼의 크기와 위치 정보를 담는 변수입니다.
     private lateinit var windowLayoutParams: WindowManager.LayoutParams 
     
+    // 현재 자동 클릭/스와이프가 실행 중인지 체크하는 스위치 역할의 변수입니다.
     private var isRunning = false
+    
+    // 자동화 작업을 반복해서 실행하게 해주는 Runnable 객체입니다.
     private var autoRunnable: Runnable? = null
+    
+    // 현재 스마트폰 화면에 떠 있는 앱의 패키지 이름을 저장합니다.
     private var currentPackageName = ""
 
-    // 플로팅 버튼 드래그 이동용 좌표 변수
+    // 사용자가 버튼을 드래그해서 옮길 때, 처음 터치한 위치를 기억하는 변수들입니다.
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
     private var initialTouchY: Float = 0f
 
-    // 서비스가 시작(연결)되면 최초 1회 실행되는 함수
+    // -------------------------------------------------------------
+    // 1. 서비스 시작 시 최초 1회 실행되는 설정 함수
+    // -------------------------------------------------------------
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // 안드로이드 시스템으로부터 윈도우 매니저 권한을 가져옵니다.
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        createFloatingView() // 화면에 띄울 멀티 버튼 레이아웃 생성
+        // 화면에 띄울 플로팅 버튼 레이아웃을 생성합니다.
+        createFloatingView()
     }
 
-    // 화면에 보여질 플로팅 레이아웃 설정 함수
+    // -------------------------------------------------------------
+    // 2. 화면 위에 둥둥 떠 있는(Floating) 레이아웃 생성
+    // -------------------------------------------------------------
     private fun createFloatingView() {
+        // 버튼을 화면 최상단에 그리기 위한 속성들을 세팅합니다.
         windowLayoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, // 내용물 크기에 맞춤
             WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, // 다른 앱 위에 그리기
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, // 버튼 바깥을 터치해도 다른 앱이 작동하게 함
+            PixelFormat.TRANSLUCENT // 반투명 설정
         )
+        // 화면 좌측 상단을 기준으로 시작 위치를 잡습니다.
         windowLayoutParams.gravity = Gravity.TOP or Gravity.START
-        windowLayoutParams.x = 100
-        windowLayoutParams.y = 300
+        windowLayoutParams.x = 100 // X 좌표 (오른쪽으로 100만큼)
+        windowLayoutParams.y = 300 // Y 좌표 (아래로 300만큼)
 
+        // 실제 레이아웃(껍데기)을 만들고 색상을 반투명 검은색으로 칠합니다.
         floatingView = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#AA000000")) // 반투명 검은색 배경
-            visibility = View.GONE // 처음엔 숨김 처리 (타겟 앱 켜지면 등장)
+            setBackgroundColor(Color.parseColor("#AA000000")) 
+            visibility = View.GONE // 처음에는 숨겨둡니다. (타겟 앱이 켜지면 보여짐)
         }
+        // 완성된 레이아웃을 화면에 등록합니다.
         windowManager?.addView(floatingView, windowLayoutParams)
     }
 
-    // 스마트폰의 화면이 바뀌거나 움직일 때마다 실시간으로 감지하는 핵심 함수
+    // -------------------------------------------------------------
+    // 3. 스마트폰 화면이 변할 때마다(이벤트 발생 시) 호출되는 핵심 함수
+    // -------------------------------------------------------------
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // 현재 화면에 뜬 앱의 이름을 가져옵니다. (예: com.toss.app)
         val pkg = event.packageName?.toString()
         
-        // 현재 열린 앱이 이전 앱과 다르다면 (앱 전환 발생 시)
+        // 새로운 앱이 화면에 나타났다면?
         if (pkg != null && pkg != currentPackageName) {
-            stopAuto() // 안전을 위해 기존에 돌던 스와이프/클릭 자동화 루프를 무조건 정지
+            stopAuto() // 안전을 위해 무조건 돌고 있던 매크로를 정지시킵니다.
             currentPackageName = pkg
             
-            // 토스, 틱톡, 캐시워크 패키지 중 하나인지 확인
+            // 이 앱이 우리가 목표로 하는 앱(토스, 틱톡, 캐시워크)인지 확인합니다.
             val isTarget = pkg.contains("toss") || 
                            pkg.contains("tiktok") || 
                            pkg.contains("musically") || 
@@ -86,50 +111,56 @@ class TossAutoService : AccessibilityService() {
 
             val layout = floatingView ?: return
 
+            // 목표 앱이면 시작 버튼을 화면에 보여주고 텍스트를 업데이트합니다.
             if (isTarget) {
-                layout.visibility = View.VISIBLE // 대상 앱이면 플로팅 버튼 표시
-                updateButtons(pkg) // 열린 앱에 맞춰 버튼 텍스트 변경
+                layout.visibility = View.VISIBLE 
+                updateButtons(pkg) 
             } else {
-                layout.visibility = View.GONE // 대상 앱이 아니면 버튼 숨김
+                // 다른 앱(예: 카카오톡)이면 버튼을 숨깁니다.
+                layout.visibility = View.GONE 
                 stopAuto() 
             }
         }
     }
 
-    // 화면 플로팅 버튼 디자인 및 드래그, 클릭 이벤트 처리 함수
+    // -------------------------------------------------------------
+    // 4. 플로팅 버튼의 디자인과 터치/드래그 동작을 제어하는 함수
+    // -------------------------------------------------------------
     private fun updateButtons(pkg: String) {
         val layout = floatingView ?: return
-        layout.removeAllViews()
+        layout.removeAllViews() // 기존에 그려진 버튼을 지웁니다.
         
+        // 현재 앱에 맞춰서 버튼에 띄울 이름을 정합니다.
         val appName = when {
             pkg.contains("toss") -> "토스"
             pkg.contains("cashwalk") -> "캐시워크"
             else -> "틱톡"
         }
 
+        // 새로운 버튼을 생성합니다.
         val btn = Button(this).apply {
-            // 실행 상태에 따라 버튼 문구 동적 변경
+            // isRunning 상태에 따라 글자를 ■ 정지 또는 ▶ 시작으로 바꿉니다.
             text = if (isRunning) "■ $appName 정지 ($APP_VERSION)" else "▶ $appName 시작 ($APP_VERSION)"
             
-            // [터치 리스너] 버튼을 꾹 눌러서 화면 원하는 곳으로 드래그 이동시키는 로직
+            // 버튼을 꾹 누르고 드래그(이동)할 때의 처리를 담당합니다.
             setOnTouchListener { _, event ->
                 when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
+                    MotionEvent.ACTION_DOWN -> { // 손가락이 처음 화면에 닿았을 때
                         initialX = windowLayoutParams.x
                         initialY = windowLayoutParams.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
                         false 
                     }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dx = (event.rawX - initialTouchX).toInt()
-                        val dy = (event.rawY - initialTouchY).toInt()
+                    MotionEvent.ACTION_MOVE -> { // 손가락을 떼지 않고 움직일 때
+                        val dx = (event.rawX - initialTouchX).toInt() // X축으로 이동한 거리
+                        val dy = (event.rawY - initialTouchY).toInt() // Y축으로 이동한 거리
                         
-                        // 미세한 떨림 방지 (10픽셀 이상 움직였을 때만 이동 처리)
+                        // 손떨림을 방지하기 위해 10픽셀 이상 움직였을 때만 창을 이동시킵니다.
                         if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
                             windowLayoutParams.x = initialX + dx
                             windowLayoutParams.y = initialY + dy
-                            windowManager?.updateViewLayout(floatingView, windowLayoutParams)
+                            windowManager?.updateViewLayout(floatingView, windowLayoutParams) // 화면 재배치
                             true 
                         } else {
                             false
@@ -139,30 +170,33 @@ class TossAutoService : AccessibilityService() {
                 }
             }
             
-            // [클릭 리스너] 시작 버튼을 누르면 정지/시작 토글 처리
+            // 버튼을 짧게 '클릭'했을 때의 처리입니다.
             setOnClickListener {
-                if (isRunning) stopAuto() else startAuto(pkg)
-                updateButtons(pkg) 
+                if (isRunning) stopAuto() else startAuto(pkg) // 켜져있으면 끄고, 꺼져있으면 켭니다.
+                updateButtons(pkg) // 버튼 글씨를 갱신합니다.
             }
         }
-        layout.addView(btn)
+        layout.addView(btn) // 완성된 버튼을 레이아웃에 넣습니다.
     }
 
-    // 자동화 동작을 총괄하는 핵심 무한 루프 스케줄러 함수
+    // -------------------------------------------------------------
+    // 5. [핵심] 자동 클릭 및 스와이프를 무한 반복하는 스케줄러 함수
+    // -------------------------------------------------------------
     private fun startAuto(pkg: String) {
         isRunning = true
         
         autoRunnable = object : Runnable {
             override fun run() {
+                // 시작 버튼이 켜져 있을 때만 작동합니다.
                 if (isRunning) {
                     
-                    // 1. [캐시워크 모드] 안전한 고유 ID 사냥 모드
+                    // [캐시워크] 모드일 경우의 로직입니다.
                     if (pkg.contains("cashwalk")) {
-                        val rootNode = rootInActiveWindow
+                        val rootNode = rootInActiveWindow // 현재 화면의 모든 뼈대 구조를 가져옵니다.
                         var nextDelay = 500L // 기본 화면 감시 주기 (1초)
                         
                         if (rootNode != null) {
-                            // 사용자가 접근성 검사기로 알아낸 정밀 ID 부품 확보
+                            // 1. 타겟 ID를 가진 요소를 모조리 찾습니다. (이때 하단 광고의 닫기 버튼도 포함될 수 있음)
                             val rewardButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/tvReceiveRewardButton")
                             val closeButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivCloseButton")
                             
@@ -176,77 +210,118 @@ class TossAutoService : AccessibilityService() {
                                 nextDelay = 500L // 창을 닫았으니 다시 여유롭게 1초 주기로 탐색 변경
                             }
                             
-                            // [중요] 안드로이드 메모리 누수 방지를 위한 노드 반환 처리
+                            // 3. 찾은 'X(닫기)' 버튼 중 안전한 위치에 있는 진짜 버튼만 골라냅니다.
+                            for (button in closeButtons) {
+                                if (isSafeLocation(button)) {
+                                    clickNodeCenter(button)
+                                    nextDelay = 500L // 창을 닫았으니 다시 1초 대기 모드로 돌아갑니다.
+                                    break
+                                }
+                            }
+                            
+                            // 안드로이드 메모리가 꽉 차는 것을 막기 위해 다 쓴 뼈대 정보는 쓰레기통에 버립니다(recycle).
                             rewardButtons.forEach { it.recycle() }
                             closeButtons.forEach { it.recycle() }
                             rootNode.recycle()
                         }
                         
-                        // 다음 탐색 예약 (여기에도 50ms~150ms 사이의 사람 같은 시간 편차 적용)
+                        // 설정된 nextDelay 값에 50ms~150ms 사이의 랜덤 시간을 더해서, 기계가 아닌 사람처럼 보이게 예약합니다.
                         handler.postDelayed(this, nextDelay + Random.nextLong(50, 151))
                     } 
                     
-                    // 2. [토스 / 틱톡 모드] 기존 방식대로 스와이프 무한 루프 작동
+                    // [토스 / 틱톡] 모드일 경우의 스와이프 로직입니다.
                     else {
-                        performSwipe()
+                        performSwipe() // 화면을 위로 쓸어 올리는 함수를 실행합니다.
                         
                         // 토스면 800ms(0.8초), 아니면(틱톡) 10000ms(10초) 기본 대기 시간 세팅
                         val baseDelay = if (pkg.contains("toss")) 800L else 10000L
                         // 기계적인 탐색을 속이기 위해 매번 100ms~200ms 사이의 시간을 추가로 더함
                         val randomDelay = Random.nextLong(100, 201) 
                         
+                        // 다음 스와이프를 예약합니다.
                         handler.postDelayed(this, baseDelay + randomDelay) 
                     }
                 }
             }
         }
+        // 예약된 루프를 처음 1회 작동시킵니다.
         handler.post(autoRunnable!!)
     }
 
-    // 자동화 동작을 안전하게 멈추는 함수
+    // -------------------------------------------------------------
+    // 6. 무한 루프 스케줄러를 정지시키는 함수
+    // -------------------------------------------------------------
     private fun stopAuto() {
         isRunning = false
-        autoRunnable?.let { handler.removeCallbacks(it) }
+        autoRunnable?.let { handler.removeCallbacks(it) } // 예약된 작업을 취소합니다.
     }
 
-    // 화면을 위아래로 쓸어 올리는 스와이프 제스처 함수 (토스 / 틱톡 전용)
+    // -------------------------------------------------------------
+    // 7. 화면을 위아래로 스와이프(쓸어올리기) 하는 제스처 함수
+    // -------------------------------------------------------------
     private fun performSwipe() {
         val dm = resources.displayMetrics
         
-        // 매번 똑같은 일직선을 긋지 않도록 X축(가로) 좌표를 좌우 ±20픽셀 랜덤 흔들기 적용
+        // 매번 똑같은 직선을 긋지 않도록 가로 좌표에 -20 ~ +20 픽셀의 오차를 줍니다.
         val randomOffsetX = Random.nextInt(-20, 21)
+        
+        // 시작점(화면 중앙 아래쪽)과 끝점(화면 중앙 위쪽)의 좌표를 계산합니다.
         val startX = (dm.widthPixels / 2f) + randomOffsetX
         val startY = dm.heightPixels * 0.7f 
         val endX = (dm.widthPixels / 2f) + randomOffsetX
         val endY = dm.heightPixels * 0.3f 
 
+        // 손가락이 지나갈 경로를 그립니다.
         val path = Path().apply {
             moveTo(startX, startY)
             lineTo(endX, endY)
         }
         
-        // 화면을 누르고 끄는 '지속 시간(속도)'도 0.3초 + (100~200ms 랜덤)을 더해 사람 손가락처럼 모사
+        // 스와이프 하는 속도(시간)를 0.3초 + (0.1~0.2초 랜덤)으로 설정합니다.
         val duration = 300L + Random.nextLong(100, 201)
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
             .build()
             
+        // 안드로이드 시스템에 제스처를 쏴줍니다!
         dispatchGesture(gesture, null, null)
     }
 
-    // 찾은 고유 ID 부품의 정확한 좌표를 계산하여 그 '주변 영역을 랜덤 타격'하는 정밀 타격 함수 (캐시워크 전용)
+    // -------------------------------------------------------------
+    // 8. [신규 핵심] 버튼이 하단 광고 영역에 있는지 좌표로 걸러내는 판별 함수
+    // -------------------------------------------------------------
+    private fun isSafeLocation(node: AccessibilityNodeInfo): Boolean {
+        val rect = Rect()
+        // 대상 버튼의 화면상 좌상단, 우하단 픽셀 좌표를 구해서 rect에 넣습니다.
+        node.getBoundsInScreen(rect)
+        
+        // 내 스마트폰의 전체 화면 높이(픽셀 단위)를 가져옵니다.
+        val screenHeight = resources.displayMetrics.heightPixels
+        
+        // 화면 최상단(0)부터 전체 높이의 85% 지점까지를 '안전 구역(Safe Zone)'으로 설정합니다.
+        // 예를 들어 화면 높이가 1000픽셀이라면, 850 지점까지만 안전하다고 봅니다.
+        val safeZoneBottom = screenHeight * 0.85
+        
+        // 버튼의 한가운데 Y(세로) 좌표가 안전 구역 안에 포함되어 있는지 검사합니다.
+        // 안전 구역보다 숫자가 크면 화면 맨 밑바닥(15% 영역)에 있다는 뜻이므로 false(광고)를 반환합니다.
+        return rect.centerY() < safeZoneBottom
+    }
+
+    // -------------------------------------------------------------
+    // 9. 특정 노드(버튼)의 중심 주변을 랜덤하게 클릭하는 정밀 타격 함수
+    // -------------------------------------------------------------
     private fun clickNodeCenter(node: AccessibilityNodeInfo) {
         val rect = Rect()
-        node.getBoundsInScreen(rect) // 디바이스 화면 전체 크기 기준, 해당 버튼의 네모 박스 좌표 추출
+        node.getBoundsInScreen(rect) 
         
-        // 기계처럼 정중앙 픽셀만 누르는 행위를 방지하기 위해 상하좌우 ±5픽셀 편차를 주어 주변을 무작위 타격!
-        val centerX = rect.centerX().toFloat() + Random.nextInt(-5, 6)
-        val centerY = rect.centerY().toFloat() + Random.nextInt(-5, 6)
+        // 기계처럼 정중앙 픽셀만 누르는 행위를 방지하기 위해 상하좌우 ±2픽셀 편차를 주어 주변을 무작위 타격!
+        val centerX = rect.centerX().toFloat() + Random.nextInt(-2, 3)
+        val centerY = rect.centerY().toFloat() + Random.nextInt(-2, 3)
         
         val path = Path().apply { moveTo(centerX, centerY) }
         
-        // 화면을 톡! 누르고 떼는 손가락의 정밀한 누름 지연 시간조차 0.05초~0.1초 사이로 미세하게 무작위 조절
-        val clickDuration = 50L + Random.nextLong(10, 51)
+        // 누르고 있는 시간조차 0.05초~0.1초 사이로 미세하게 무작위 조절합니다.
+        val clickDuration = 50L + Random.nextLong(10, 51) 
         
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, clickDuration))
@@ -257,11 +332,13 @@ class TossAutoService : AccessibilityService() {
 
     private fun showToast(msg: String) = handler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 
-    // 앱이 완전히 종료되거나 서비스가 꺼질 때 메모리 정리용 함수
+    // -------------------------------------------------------------
+    // 10. 앱이나 서비스가 종료될 때 찌꺼기를 치우는 함수
+    // -------------------------------------------------------------
     override fun onDestroy() {
         super.onDestroy()
-        stopAuto()
-        floatingView?.let { windowManager?.removeView(it) }
+        stopAuto() // 돌고 있던 매크로를 멈춥니다.
+        floatingView?.let { windowManager?.removeView(it) } // 화면에서 버튼 상자를 제거합니다.
     }
 
     override fun onInterrupt() {}
