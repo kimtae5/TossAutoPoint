@@ -49,6 +49,9 @@ class TossAutoService : AccessibilityService() {
     // 캡처 중복 방지: 스크린샷 처리가 진행 중일 때 또 캡처하는 것을 막습니다.
     private var isCapturing = false 
 
+    // 💡 [빌드 에러 해결] 적립하기를 누른 후 닫기 버튼을 처리해야 하는지 기억하는 v2.9 표준 상태 스위치입니다.
+    private var waitingForRewardClose = false
+
     private var initialX: Int = 0
     private var initialY: Int = 0
     private var initialTouchX: Float = 0f
@@ -143,7 +146,9 @@ class TossAutoService : AccessibilityService() {
             // isRunning 상태에 따라 글자를 ■ 정지 또는 ▶ 시작으로 바꿉니다.
             text = if (isRunning) "■ $appName 정지 ($APP_VERSION)" else "▶ $appName 시작 ($APP_VERSION)"
             
-            // 버튼을 꾹 누르고 드래그(이동)할 때의 처리를 담당합니다.
+            // 💡 [투명도 적용] 버튼을 살짝 투명하게 설정합니다 (0.8f = 80% 불투명)
+            alpha = 0.8f
+            
             setOnTouchListener { _, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> { // 손가락이 처음 화면에 닿았을 때
