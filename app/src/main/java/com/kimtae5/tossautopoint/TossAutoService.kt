@@ -147,7 +147,7 @@ class TossAutoService : AccessibilityService() {
             text = if (isRunning) "■ $appName 정지 ($APP_VERSION)" else "▶ $appName 시작 ($APP_VERSION)"
             
             // 💡 [투명도 적용] 버튼을 살짝 투명하게 설정합니다 (0.8f = 80% 불투명)
-            alpha = 0.8f
+            alpha = 0.5f
             
             setOnTouchListener { _, event ->
                 when (event.action) {
