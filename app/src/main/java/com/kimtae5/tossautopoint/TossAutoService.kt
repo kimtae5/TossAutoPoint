@@ -21,8 +21,8 @@ import kotlin.random.Random
 
 class TossAutoService : AccessibilityService() {
 
-    // 버전 2.8: 서랍 애니메이션 대응 및 고유 버튼(적립/보물상자) 위치 필터 해제
-    private val APP_VERSION = "v2.8"
+    // 버전 2.9: 적립하기 클릭 후 닫기 버튼 우선 처리 후 재검색하는 순서 제어 로직 적용
+    private val APP_VERSION = "v2.9"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -97,6 +97,11 @@ class TossAutoService : AccessibilityService() {
         if (pkg != null && pkg != currentPackageName) {
             stopAuto() // 안전을 위해 무조건 돌고 있던 매크로를 정지시킵니다.
             currentPackageName = pkg
+            
+            // 캐시워크 진입 시 상태 초기화
+            if (pkg.contains("cashwalk")) {
+                waitingForRewardClose = false
+            }
             
             val isTarget = pkg.contains("toss") || 
                            pkg.contains("tiktok") || 
@@ -201,52 +206,72 @@ class TossAutoService : AccessibilityService() {
                             // 한 번의 루프(0.5초)당 한 번만 클릭하도록 제어하는 스위치입니다.
                             var isClickedInThisLoop = false
 
-                            // ---------------------------------------------------------
-                            // [1순위: 광고 창 닫기] (X버튼은 하단 광고와 겹칠 수 있으니 85% 안전구역 필터 유지!)
-                            // ---------------------------------------------------------
-                            if (!isClickedInThisLoop) {
-                                for (button in adCloseButtons) {
-                                    if (isSafeLocation(button)) {
-                                        clickNodeCenter(button)
-                                        isClickedInThisLoop = true
-                                        break
+                            // 💡 [핵심 순서 제어 분기]
+                            if (waitingForRewardClose) {
+                                // 1단계: 적립하기를 누른 직후 상태 -> 오직 닫기 버튼들(`ivClose`, `ivCloseButton`)만 먼저 찾아서 처리합니다!
+                                if (!isClickedInThisLoop) {
+                                    for (button in adCloseButtons) {
+                                        if (button.isVisibleToUser) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            waitingForRewardClose = false // 닫기 성공 시 플래그 해제 -> 다시 적립하기 검색 재개 가능해짐!
+                                            break
+                                        }
                                     }
                                 }
-                            }
-                            if (!isClickedInThisLoop) {
-                                for (button in locationCloseButtons) {
-                                    if (isSafeLocation(button)) {
-                                        clickNodeCenter(button)
-                                        isClickedInThisLoop = true
-                                        break
+                                if (!isClickedInThisLoop) {
+                                    for (button in locationCloseButtons) {
+                                        if (button.isVisibleToUser) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            waitingForRewardClose = false // 닫기 성공 시 플래그 해제
+                                            break
+                                        }
                                     }
                                 }
-                            }
+                            } else {
+                                // 2단계: 평소 루프 (광고 닫기 ➔ 적립하기 ➔ 보물상자 순서)
+                                
+                                // 순위 1: 일반 광고 창 닫기 (안전 구역 필터 유지)
+                                if (!isClickedInThisLoop) {
+                                    for (button in adCloseButtons) {
+                                        if (isSafeLocation(button)) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            break
+                                        }
+                                    }
+                                }
+                                if (!isClickedInThisLoop) {
+                                    for (button in locationCloseButtons) {
+                                        if (isSafeLocation(button)) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            break
+                                        }
+                                    }
+                                }
 
-                            // ---------------------------------------------------------
-                            // [2순위: '적립하기' 누르기] (확실한 고유 버튼이므로 위치 필터 해제!)
-                            // ---------------------------------------------------------
-                            if (!isClickedInThisLoop) {
-                                for (button in rewardButtons) {
-                                    // 하단에 있든 어디에 있든 투명한 가짜 버튼만 아니면 무조건 클릭!
-                                    // 0.5초마다 추적하므로, 올라오는 중이라도 다음 0.5초 뒤에 멈춘 위치를 정확히 찍습니다.
-                                    if (button.isVisibleToUser) { 
-                                        clickNodeCenter(button)
-                                        isClickedInThisLoop = true
-                                        break
+                                // 순위 2: '적립하기' 누르기
+                                if (!isClickedInThisLoop) {
+                                    for (button in rewardButtons) {
+                                        if (button.isVisibleToUser) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            waitingForRewardClose = true // 💡 적립하기를 눌렀으므로 다음 루프부터는 닫기 버튼을 먼저 찾도록 스위치 온!
+                                            break
+                                        }
                                     }
                                 }
-                            }
-                            
-                            // ---------------------------------------------------------
-                            // [3순위: '보물상자' 누르기] (확실한 고유 버튼이므로 위치 필터 해제!)
-                            // ---------------------------------------------------------
-                            if (!isClickedInThisLoop) {
-                                for (button in treasureBoxes) {
-                                    if (button.isVisibleToUser) { // 위치 필터 검사 X, 보이는지만 검사 O
-                                        clickNodeCenter(button)
-                                        isClickedInThisLoop = true
-                                        break
+                                
+                                // 순위 3: '보물상자' 누르기
+                                if (!isClickedInThisLoop) {
+                                    for (button in treasureBoxes) {
+                                        if (button.isVisibleToUser) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            break
+                                        }
                                     }
                                 }
                             }
