@@ -22,7 +22,7 @@ import kotlin.random.Random
 class TossAutoService : AccessibilityService() {
 
     // 버전 2.9: 적립하기 클릭 후 닫기 버튼 우선 처리 후 재검색하는 순서 제어 로직 적용
-    private val APP_VERSION = "v2.91"
+    private val APP_VERSION = "v2.92"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -301,51 +301,50 @@ class TossAutoService : AccessibilityService() {
                     }
                     // 3. [틱톡] 모드 (수정된 0.5초 탐색 기반 동적 스와이프 적용)
                     else {
-                        val rootNode = rootInActiveWindow
-                        var hasPointIcon = false
-                        
-                        // 화면 내 포인트 아이콘(id: com.ss.android.ugc.tiktok.lite:id/yib) 탐색
-                        if (rootNode != null) {
-                            hasPointIcon = isTikTokPointIconPresent(rootNode)
-                            rootNode.recycle()
+                        if (isTikTokCheckingPhase) {
+                            // [Phase 1] 화면 스캔 단계
+                            val rootNode = rootInActiveWindow
+                            var hasPointIcon = false
+                            
+                            if (rootNode != null) {
+                                // 오직 틱톡 라이트 전용 ID만 스캔합니다.
+                                val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/yib")
+                                if (liteNodes.isNotEmpty()) {
+                                    hasPointIcon = liteNodes.any { it.isVisibleToUser }
+                                    liteNodes.forEach { it.recycle() }
+                                }
+                                rootNode.recycle()
+                            }
+                            
+                            // 아이콘이 있으면 10초(10000ms), 없으면 0.5초(500ms)로 대기 시간 설정
+                            val watchDelay = if (hasPointIcon) 10000L else 500L
+                            val randomDelay = Random.nextLong(0, 201)
+                            
+                            // 다음 루프는 스와이프를 하도록 상태 변경
+                            isTikTokCheckingPhase = false 
+                            handler.postDelayed(this, watchDelay + randomDelay)
+                            
+                        } else {
+                            // [Phase 2] 스와이프 실행 단계
+                            performSwipe()
+                            
+                            // 스와이프를 했으니 다음 루프는 다시 화면 스캔으로 상태 변경
+                            isTikTokCheckingPhase = true 
+                            
+                            // 💡 새로운 영상이 로딩될 수 있도록 1초(1000ms) 대기 후 스캔 루프로 돌아갑니다.
+                            handler.postDelayed(this, 1000L) 
                         }
-                        
-                        // 화면 스와이프 동작
-                        performSwipe()
-                        
-                        // ID가 존재하면 10초(10000ms), 없으면 1초(1000ms) 대기 (+ 0.2초 랜덤 오차 적용)
-                        val baseDelay = if (hasPointIcon) 10000L else 1000L
-                        val randomDelay = Random.nextLong(0, 201)
-                        
-                        handler.postDelayed(this, baseDelay + randomDelay)
                     }
                 }
             }
         }
-        // 예약된 루프를 처음 1회 작동시킵니다.
-        handler.post(autoRunnable!!)
+        
+        // 💡 시작 시 최초 진입 타이밍 설정: 틱톡이면 1초(1000ms) 후 최초 스캔 실행
+        val isTikTok = pkg.contains("tiktok") || pkg.contains("trill") || pkg.contains("aweme")
+        val initialDelay = if (isTikTok) 1000L else 0L
+        handler.postDelayed(autoRunnable!!, initialDelay)
     }
 
-    // 💡 [신규] 틱톡 포인트 아이콘(com.ss.android.ugc.tiktok.lite:id/yib) 검사 전용 함수
-    private fun isTikTokPointIconPresent(rootNode: AccessibilityNodeInfo): Boolean {
-        // TikTok Lite 패키지 대응 ID 탐색
-        val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/yib")
-        if (liteNodes.isNotEmpty()) {
-            val isVisible = liteNodes.any { it.isVisibleToUser }
-            liteNodes.forEach { it.recycle() }
-            if (isVisible) return true
-        }
-
-        // 일반 TikTok 패키지 대응 ID 탐색
-        val mainNodes = rootNode.findAccessibilityNodeInfosByViewId("com.zhiliaoapp.musically:id/yib")
-        if (mainNodes.isNotEmpty()) {
-            val isVisible = mainNodes.any { it.isVisibleToUser }
-            mainNodes.forEach { it.recycle() }
-            if (isVisible) return true
-        }
-
-        return false
-    }
     private fun stopAuto() {
         isRunning = false
         autoRunnable?.let { handler.removeCallbacks(it) } // 예약된 작업을 취소합니다.
