@@ -48,9 +48,10 @@ class TossAutoService : AccessibilityService() {
     private var isMapPinClicked = false 
     // 캡처 중복 방지: 스크린샷 처리가 진행 중일 때 또 캡처하는 것을 막습니다.
     private var isCapturing = false 
-
-    // 💡 [빌드 에러 해결] 적립하기를 누른 후 닫기 버튼을 처리해야 하는지 기억하는 v2.9 표준 상태 스위치입니다.
     private var waitingForRewardClose = false
+
+    // 💡 [신규] 틱톡 라이트용: 현재 단계가 '화면 스캔' 단계인지 '스와이프 실행' 단계인지 구분합니다.
+    private var isTikTokCheckingPhase = true 
 
     private var initialX: Int = 0
     private var initialY: Int = 0
