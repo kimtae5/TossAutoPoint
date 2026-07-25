@@ -22,7 +22,7 @@ import kotlin.random.Random
 class TossAutoService : AccessibilityService() {
 
     // 버전 2.9: 적립하기 클릭 후 닫기 버튼 우선 처리 후 재검색하는 순서 제어 로직 적용
-    private val APP_VERSION = "v2.9"
+    private val APP_VERSION = "v2.91"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -292,18 +292,32 @@ class TossAutoService : AccessibilityService() {
                         // 설정된 nextDelay 값에 50ms~150ms 사이의 랜덤 시간을 더해서, 기계가 아닌 사람처럼 보이게 예약합니다.
                         handler.postDelayed(this, nextDelay + Random.nextLong(50, 151))
                     } 
-                    
-                    // [토스 / 틱톡] 모드일 경우의 스와이프 로직입니다.
-                    else {
-                        performSwipe() // 화면을 위로 쓸어 올리는 함수를 실행합니다.
-                        
-                        // 토스면 800ms(0.8초), 아니면(틱톡) 10000ms(10초) 기본 대기 시간 세팅
-                        val baseDelay = if (pkg.contains("toss")) 800L else 10000L
-                        // 기계적인 탐색을 속이기 위해 매번 100ms~200ms 사이의 시간을 추가로 더함
-                        val randomDelay = Random.nextLong(100, 201) 
-                        
-                        // 다음 스와이프를 예약합니다.
+                    // 2. [토스] 모드 (기존 v2.9 동일 유지)
+                    else if (pkg.contains("toss")) {
+                        performSwipe() 
+                        val baseDelay = 800L
+                        val randomDelay = Random.nextLong(0, 201) 
                         handler.postDelayed(this, baseDelay + randomDelay) 
+                    }
+                    // 3. [틱톡] 모드 (수정된 0.5초 탐색 기반 동적 스와이프 적용)
+                    else {
+                        val rootNode = rootInActiveWindow
+                        var hasPointIcon = false
+                        
+                        // 화면 내 포인트 아이콘(id: com.ss.android.ugc.tiktok.lite:id/yib) 탐색
+                        if (rootNode != null) {
+                            hasPointIcon = isTikTokPointIconPresent(rootNode)
+                            rootNode.recycle()
+                        }
+                        
+                        // 화면 스와이프 동작
+                        performSwipe()
+                        
+                        // ID가 존재하면 10초(10000ms), 없으면 1초(1000ms) 대기 (+ 0.2초 랜덤 오차 적용)
+                        val baseDelay = if (hasPointIcon) 10000L else 1000L
+                        val randomDelay = Random.nextLong(0, 201)
+                        
+                        handler.postDelayed(this, baseDelay + randomDelay)
                     }
                 }
             }
@@ -312,9 +326,26 @@ class TossAutoService : AccessibilityService() {
         handler.post(autoRunnable!!)
     }
 
-    // -------------------------------------------------------------
-    // 6. 무한 루프 스케줄러를 정지시키는 함수
-    // -------------------------------------------------------------
+    // 💡 [신규] 틱톡 포인트 아이콘(com.ss.android.ugc.tiktok.lite:id/yib) 검사 전용 함수
+    private fun isTikTokPointIconPresent(rootNode: AccessibilityNodeInfo): Boolean {
+        // TikTok Lite 패키지 대응 ID 탐색
+        val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/yib")
+        if (liteNodes.isNotEmpty()) {
+            val isVisible = liteNodes.any { it.isVisibleToUser }
+            liteNodes.forEach { it.recycle() }
+            if (isVisible) return true
+        }
+
+        // 일반 TikTok 패키지 대응 ID 탐색
+        val mainNodes = rootNode.findAccessibilityNodeInfosByViewId("com.zhiliaoapp.musically:id/yib")
+        if (mainNodes.isNotEmpty()) {
+            val isVisible = mainNodes.any { it.isVisibleToUser }
+            mainNodes.forEach { it.recycle() }
+            if (isVisible) return true
+        }
+
+        return false
+    }
     private fun stopAuto() {
         isRunning = false
         autoRunnable?.let { handler.removeCallbacks(it) } // 예약된 작업을 취소합니다.
