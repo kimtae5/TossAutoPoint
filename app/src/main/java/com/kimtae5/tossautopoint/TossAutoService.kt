@@ -208,6 +208,7 @@ class TossAutoService : AccessibilityService() {
                             val locationCloseButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivCloseButton")
                             val treasureBoxes = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/coinbox")
                             val adCloseButtons = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/ivClose")
+                            val adCloseButtons2 = rootNode.findAccessibilityNodeInfosByViewId("com.cashwalk.cashwalk:id/iv_ad_close_btn")
                             
                             // 한 번의 루프(0.5초)당 한 번만 클릭하도록 제어하는 스위치입니다.
                             var isClickedInThisLoop = false
@@ -217,6 +218,16 @@ class TossAutoService : AccessibilityService() {
                                 // 1단계: 적립하기를 누른 직후 상태 -> 오직 닫기 버튼들(`ivClose`, `ivCloseButton`)만 먼저 찾아서 처리합니다!
                                 if (!isClickedInThisLoop) {
                                     for (button in adCloseButtons) {
+                                        if (button.isVisibleToUser) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            waitingForRewardClose = false // 닫기 성공 시 플래그 해제 -> 다시 적립하기 검색 재개 가능해짐!
+                                            break
+                                        }
+                                    }
+                                }
+                                if (!isClickedInThisLoop) {
+                                    for (button in adCloseButtons2) {
                                         if (button.isVisibleToUser) {
                                             clickNodeCenter(button)
                                             isClickedInThisLoop = true
@@ -241,6 +252,15 @@ class TossAutoService : AccessibilityService() {
                                 // 순위 1: 일반 광고 창 닫기 (안전 구역 필터 유지)
                                 if (!isClickedInThisLoop) {
                                     for (button in adCloseButtons) {
+                                        if (isSafeLocation(button)) {
+                                            clickNodeCenter(button)
+                                            isClickedInThisLoop = true
+                                            break
+                                        }
+                                    }
+                                }
+                                if (!isClickedInThisLoop) {
+                                    for (button in adCloseButtons2) {
                                         if (isSafeLocation(button)) {
                                             clickNodeCenter(button)
                                             isClickedInThisLoop = true
@@ -287,6 +307,7 @@ class TossAutoService : AccessibilityService() {
                             locationCloseButtons.forEach { it.recycle() }
                             treasureBoxes.forEach { it.recycle() }
                             adCloseButtons.forEach { it.recycle() }
+                            adCloseButtons2.forEach { it.recycle() }
                             rootNode.recycle()
                         }
                         
