@@ -330,7 +330,7 @@ class TossAutoService : AccessibilityService() {
                             
                             if (rootNode != null) {
                                 // 오직 틱톡 라이트 전용 ID만 스캔합니다.
-                                val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/yvr")
+                                val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/zb4")
                                 if (liteNodes.isNotEmpty()) {
                                     hasPointIcon = liteNodes.any { it.isVisibleToUser }
                                     liteNodes.forEach { it.recycle() }
