@@ -22,7 +22,7 @@ import kotlin.random.Random
 class TossAutoService : AccessibilityService() {
 
     // 버전 2.9: 적립하기 클릭 후 닫기 버튼 우선 처리 후 재검색하는 순서 제어 로직 적용
-    private val APP_VERSION = "v2.92"
+    private val APP_VERSION = "v2.93"
 
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -120,6 +120,12 @@ class TossAutoService : AccessibilityService() {
             if (isTarget) {
                 layout.visibility = View.VISIBLE 
                 updateButtons(pkg) 
+// 💡 [수정위치 1] 캐시워크 앱 실행 및 화면 전환 시 버튼 클릭 없이 자동으로 자동화 동작 시작
+                // 💡 [수정위치 1] 캐시워크 앱 실행 및 화면 전환 시 버튼 클릭 없이 자동으로 자동화 동작 시작
+                if (pkg.contains("cashwalk") && !isRunning) {
+                    startAuto(pkg)
+                    updateButtons(pkg)
+                }
             } else {
                 // 다른 앱(예: 카카오톡)이면 버튼을 숨깁니다.
                 layout.visibility = View.GONE 
