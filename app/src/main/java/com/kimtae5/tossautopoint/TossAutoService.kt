@@ -23,7 +23,7 @@ class TossAutoService : AccessibilityService() {
 
     // 버전 2.9: 적립하기 클릭 후 닫기 버튼 우선 처리 후 재검색하는 순서 제어 로직 적용
     private val APP_VERSION = "v2.93"
-
+    private val TIKTOK_ID_SUFFIX = "zz_" // 틱톡이 업데이트되면 이 값만 변경
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
     
@@ -336,7 +336,7 @@ class TossAutoService : AccessibilityService() {
                             
                             if (rootNode != null) {
                                 // 오직 틱톡 라이트 전용 ID만 스캔합니다.
-                                val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/zz_")
+                                val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/$TIKTOK_ID_SUFFIX")
                                 if (liteNodes.isNotEmpty()) {
                                     hasPointIcon = liteNodes.any { it.isVisibleToUser }
                                     liteNodes.forEach { it.recycle() }
