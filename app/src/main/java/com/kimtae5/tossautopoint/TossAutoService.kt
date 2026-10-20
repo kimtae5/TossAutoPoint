@@ -362,7 +362,7 @@ class TossAutoService : AccessibilityService() {
                             
                         } else {
                             // [Phase 2] 스와이프 실행 단계
-                            performSwipe()
+                            performTikTokSwipe()
                             isTikTokCheckingPhase = true 
                             handler.postDelayed(this, 1000L) 
                         }
@@ -410,6 +410,37 @@ class TossAutoService : AccessibilityService() {
             .build()
             
         // 안드로이드 시스템에 제스처를 쏴줍니다!
+        dispatchGesture(gesture, null, null)
+    }
+
+    // 💡 틱톡 전용: 스와이프 시작점을 200픽셀 올린 제스처 함수
+    private fun performTikTokSwipe() {
+        val dm = resources.displayMetrics
+        
+        // 매번 똑같은 직선을 긋지 않도록 가로 좌표에 오차 생성
+        val randomOffsetX = Random.nextInt(-20, 21)
+        
+        // 시작점과 끝점 좌표 계산
+        val startX = (dm.widthPixels / 2f) + randomOffsetX
+        // 💡 기존(dm.heightPixels * 0.7f)에서 200픽셀을 빼서 시작점을 위로 올립니다.
+        val startY = (dm.heightPixels * 0.7f) - 200 
+        
+        val endX = (dm.widthPixels / 2f) + randomOffsetX
+        val endY = dm.heightPixels * 0.3f 
+    
+        // 손가락이 지나갈 경로 그리기
+        val path = Path().apply {
+            moveTo(startX, startY)
+            lineTo(endX, endY)
+        }
+        
+        // 스와이프 속도 설정 (0.3초 ~ 0.5초 랜덤)
+        val duration = 300L + Random.nextLong(100, 201)
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+            .build()
+            
+        // 제스처 실행
         dispatchGesture(gesture, null, null)
     }
 
