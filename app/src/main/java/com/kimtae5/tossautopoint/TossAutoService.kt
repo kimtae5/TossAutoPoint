@@ -22,7 +22,7 @@ import kotlin.random.Random
 class TossAutoService : AccessibilityService() {
 
     // 버전 2.9: 적립하기 클릭 후 닫기 버튼 우선 처리 후 재검색하는 순서 제어 로직 적용
-    private val APP_VERSION = "v2.93"
+    private val APP_VERSION = "v2.94"
     private val TIKTOK_ID_SUFFIX = "zwm" // 틱톡이 업데이트되면 이 값만 변경
     // 메인 스레드에서 작업을 예약하고 실행하기 위한 핸들러입니다.
     private val handler = Handler(Looper.getMainLooper())
@@ -327,48 +327,43 @@ class TossAutoService : AccessibilityService() {
                         val randomDelay = Random.nextLong(0, 201) 
                         handler.postDelayed(this, baseDelay + randomDelay) 
                     }
-                    // 3. [틱톡] 모드 (수정된 0.5초 탐색 기반 동적 스와이프 적용)
+                    // 3. [틱톡] 모드 (구역 마진 확장 버전)
                     else {
                         if (isTikTokCheckingPhase) {
-                        // [Phase 1] 화면 스캔 단계
-                        val rootNode = rootInActiveWindow
-                        var hasPointIcon = false
-                        
-                        if (rootNode != null) {
-                            val dm = resources.displayMetrics
+                            // [Phase 1] 화면 스캔 단계
+                            val rootNode = rootInActiveWindow
+                            var hasPointIcon = false
                             
-                            // 💡 현재 스마트폰 해상도 기준 100, 500의 비율 좌표 계산 (가로 9.2%, 세로 21.3%)
-                            val centerX = (dm.widthPixels * 0.092f).toInt()  
-                            val centerY = (dm.heightPixels * 0.213f).toInt() 
+                            if (rootNode != null) {
+                                val dm = resources.displayMetrics
+                                
+                                // 💡 비율 좌표 계산 (가로 9.2%, 세로 21.3%)
+                                val centerX = (dm.widthPixels * 0.092f).toInt()  
+                                val centerY = (dm.heightPixels * 0.213f).toInt() 
+                                
+                                // 💡 빗겨나가는 것을 방지하기 위해 구역 크기를 가로 150px, 세로 150px로 대폭 확장!
+                                val targetRegion = Rect(
+                                    centerX - 75, // 좌
+                                    centerY - 75, // 상
+                                    centerX + 75, // 우
+                                    centerY + 75  // 하
+                                )
+                                
+                                hasPointIcon = checkTikTokIconInRegion(rootNode, targetRegion)
+                                rootNode.recycle()
+                            }
                             
-                            // 💡 중심점 기준 가로 80px, 세로 80px 크기의 사각형 영역(Rect) 생성
-                            val targetRegion = Rect(
-                                centerX - 40, // 좌 (중심에서 -40px)
-                                centerY - 40, // 상 (중심에서 -40px)
-                                centerX + 40, // 우 (중심에서 +40px)
-                                centerY + 40  // 하 (중심에서 +40px)
-                            )
-                            
-                            hasPointIcon = checkTikTokIconInRegion(rootNode, targetRegion)
-                            rootNode.recycle()
-                        }
-                            
-                            // 아이콘이 있으면 10초(10000ms), 없으면 0.5초(500ms)로 대기 시간 설정
+                            // 아이콘이 감지되면 10초, 없으면 0.5초 대기
                             val watchDelay = if (hasPointIcon) 10000L else 500L
                             val randomDelay = Random.nextLong(0, 201)
                             
-                            // 다음 루프는 스와이프를 하도록 상태 변경
                             isTikTokCheckingPhase = false 
                             handler.postDelayed(this, watchDelay + randomDelay)
                             
                         } else {
                             // [Phase 2] 스와이프 실행 단계
                             performSwipe()
-                            
-                            // 스와이프를 했으니 다음 루프는 다시 화면 스캔으로 상태 변경
                             isTikTokCheckingPhase = true 
-                            
-                            // 💡 새로운 영상이 로딩될 수 있도록 1초(1000ms) 대기 후 스캔 루프로 돌아갑니다.
                             handler.postDelayed(this, 1000L) 
                         }
                     }
@@ -461,20 +456,26 @@ class TossAutoService : AccessibilityService() {
     // 클래스 맨 아래에 완전히 새로 추가된 영역 검사 함수입니다.
     private fun checkTikTokIconInRegion(node: AccessibilityNodeInfo?, region: Rect): Boolean {
         if (node == null) return false
-    
+
         val nodeRect = Rect()
         node.getBoundsInScreen(nodeRect)
-    
-        // 눈에 보이고, 실시간 계산된 80x80 박스 영역과 노드의 위치가 겹치는지 체크
+
+        // 사용자의 눈에 보이고, 확장된 감지 구역(150x150) 내에 완벽히 들어오는지 확인
         if (node.isVisibleToUser && Rect.intersects(nodeRect, region)) {
             val viewId = node.viewIdResourceName
-            // ID의 뒷자리 난수와 상관없이 패키지 주소명만 맞으면 무조건 감지 성공 처리
+            
+            // 조건 1: 기존처럼 틱톡 라이트 패키지 ID가 매칭되는 경우
             if (viewId != null && viewId.contains("com.ss.android.ugc.tiktok.lite:id")) {
                 return true
             }
+            
+            // 조건 2: 틱톡이 ID를 숨겼을 경우를 대비한 플랜B (클릭 가능하고 크기가 아이콘 규격인 경우)
+            if (node.isClickable && nodeRect.width() > 10 && nodeRect.height() > 10) {
+                return true
+            }
         }
-    
-        // 해당 박스 범위 내에 겹쳐 있는 자식 노드들만 스마트하게 추적
+
+        // 영역 내에 겹치는 자식 노드들을 추적
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             val childRect = Rect()
