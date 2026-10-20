@@ -330,19 +330,28 @@ class TossAutoService : AccessibilityService() {
                     // 3. [틱톡] 모드 (수정된 0.5초 탐색 기반 동적 스와이프 적용)
                     else {
                         if (isTikTokCheckingPhase) {
-                            // [Phase 1] 화면 스캔 단계
-                            val rootNode = rootInActiveWindow
-                            var hasPointIcon = false
+                        // [Phase 1] 화면 스캔 단계
+                        val rootNode = rootInActiveWindow
+                        var hasPointIcon = false
+                        
+                        if (rootNode != null) {
+                            val dm = resources.displayMetrics
                             
-                            if (rootNode != null) {
-                                // 오직 틱톡 라이트 전용 ID만 스캔합니다.
-                                val liteNodes = rootNode.findAccessibilityNodeInfosByViewId("com.ss.android.ugc.tiktok.lite:id/$TIKTOK_ID_SUFFIX")
-                                if (liteNodes.isNotEmpty()) {
-                                    hasPointIcon = liteNodes.any { it.isVisibleToUser }
-                                    liteNodes.forEach { it.recycle() }
-                                }
-                                rootNode.recycle()
-                            }
+                            // 💡 현재 스마트폰 해상도 기준 100, 500의 비율 좌표 계산 (가로 9.2%, 세로 21.3%)
+                            val centerX = (dm.widthPixels * 0.092f).toInt()  
+                            val centerY = (dm.heightPixels * 0.213f).toInt() 
+                            
+                            // 💡 중심점 기준 가로 80px, 세로 80px 크기의 사각형 영역(Rect) 생성
+                            val targetRegion = Rect(
+                                centerX - 40, // 좌 (중심에서 -40px)
+                                centerY - 40, // 상 (중심에서 -40px)
+                                centerX + 40, // 우 (중심에서 +40px)
+                                centerY + 40  // 하 (중심에서 +40px)
+                            )
+                            
+                            hasPointIcon = checkTikTokIconInRegion(rootNode, targetRegion)
+                            rootNode.recycle()
+                        }
                             
                             // 아이콘이 있으면 10초(10000ms), 없으면 0.5초(500ms)로 대기 시간 설정
                             val watchDelay = if (hasPointIcon) 10000L else 500L
@@ -447,6 +456,39 @@ class TossAutoService : AccessibilityService() {
             .build()
             
         dispatchGesture(gesture, null, null)
+    }
+
+    // 클래스 맨 아래에 완전히 새로 추가된 영역 검사 함수입니다.
+    private fun checkTikTokIconInRegion(node: AccessibilityNodeInfo?, region: Rect): Boolean {
+        if (node == null) return false
+    
+        val nodeRect = Rect()
+        node.getBoundsInScreen(nodeRect)
+    
+        // 눈에 보이고, 실시간 계산된 80x80 박스 영역과 노드의 위치가 겹치는지 체크
+        if (node.isVisibleToUser && Rect.intersects(nodeRect, region)) {
+            val viewId = node.viewIdResourceName
+            // ID의 뒷자리 난수와 상관없이 패키지 주소명만 맞으면 무조건 감지 성공 처리
+            if (viewId != null && viewId.contains("com.ss.android.ugc.tiktok.lite:id")) {
+                return true
+            }
+        }
+    
+        // 해당 박스 범위 내에 겹쳐 있는 자식 노드들만 스마트하게 추적
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val childRect = Rect()
+            child.getBoundsInScreen(childRect)
+            
+            if (Rect.intersects(childRect, region)) {
+                if (checkTikTokIconInRegion(child, region)) {
+                    child.recycle()
+                    return true
+                }
+            }
+            child.recycle()
+        }
+        return false
     }
 
     private fun showToast(msg: String) = handler.post { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
